@@ -2,21 +2,27 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, FileText, Layers, Link2, ListChecks, Loader2, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeft, FileText, Globe2, Layers, Link2, ListChecks, Loader2, Pencil, Plus, Sparkles, Trash2, Upload } from "lucide-react";
 import useRequireAuth from "@/lib/useRequireAuth";
 import MentorManager from "@/components/adminDashboard/MentorManager";
 import {
+  createAdminGlobalSource,
   createAdminJourneyPhase,
   createAdminJourneyStage,
   createAdminStageDocument,
+  deleteAdminGlobalSource,
   deleteAdminJourneyPhase,
   deleteAdminJourneyStage,
   deleteAdminStageDocument,
+  listAdminGlobalSources,
   listAdminJourney,
   listAdminStageDocuments,
+  updateAdminGlobalSource,
   updateAdminJourneyPhase,
   updateAdminJourneyStage,
-  updateAdminStageDocument
+  updateAdminStageDocument,
+  uploadAdminGlobalSource,
+  uploadAdminStageDocument
 } from "@/lib/startup";
 
 const EMPTY_PHASE = {
@@ -58,6 +64,16 @@ const EMPTY_DOCUMENT = {
 };
 
 const DOCUMENT_TYPES = ["reference", "policy", "prompt", "example", "research", "template"];
+
+const EMPTY_GLOBAL_SOURCE = {
+  id: null,
+  title: "",
+  source_type: "manual",
+  source_url: "",
+  content_text: "",
+  tags: "",
+  is_active: true
+};
 
 function StatTile({ label, value, detail, tone = "slate" }) {
   const toneClasses = {
@@ -114,6 +130,11 @@ export default function AdminJourneyPage() {
   const [documents, setDocuments] = useState([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [documentForm, setDocumentForm] = useState(EMPTY_DOCUMENT);
+  const [documentFile, setDocumentFile] = useState(null);
+  const [globalSources, setGlobalSources] = useState([]);
+  const [globalSourcesLoading, setGlobalSourcesLoading] = useState(true);
+  const [globalSourceFile, setGlobalSourceFile] = useState(null);
+  const [globalSourceForm, setGlobalSourceForm] = useState(EMPTY_GLOBAL_SOURCE);
 
   const phases = useMemo(() => journey || [], [journey]);
   const stages = useMemo(
@@ -148,14 +169,34 @@ export default function AdminJourneyPage() {
     }
   };
 
+  const loadGlobalSources = async () => {
+    setGlobalSourcesLoading(true);
+    try {
+      const data = await listAdminGlobalSources();
+      setGlobalSources(Array.isArray(data?.sources) ? data.sources : []);
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.message || "Unable to load global sources.");
+    } finally {
+      setGlobalSourcesLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadJourney();
     loadDocuments();
+    loadGlobalSources();
   }, []);
 
   const resetPhase = () => setPhaseForm(EMPTY_PHASE);
   const resetStage = () => setStageForm(EMPTY_STAGE);
-  const resetDocument = () => setDocumentForm(EMPTY_DOCUMENT);
+  const resetDocument = () => {
+    setDocumentForm(EMPTY_DOCUMENT);
+    setDocumentFile(null);
+  };
+  const resetGlobalSource = () => {
+    setGlobalSourceForm(EMPTY_GLOBAL_SOURCE);
+    setGlobalSourceFile(null);
+  };
 
   const savePhase = async (event) => {
     event?.preventDefault?.();
@@ -247,28 +288,55 @@ export default function AdminJourneyPage() {
 
   const saveDocument = async (event) => {
     event?.preventDefault?.();
+    if (!Number(documentForm.stage_id)) {
+      setError("Pick a stage before saving the document.");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
-      const payload = {
-        stage_id: Number(documentForm.stage_id),
-        title: documentForm.title,
-        document_type: documentForm.document_type,
-        source_type: documentForm.source_type,
-        source_url: documentForm.source_type === "url" ? documentForm.source_url : "",
-        content_text: documentForm.source_type === "manual" ? documentForm.content_text : "",
-        tags: documentForm.tags,
-        language: documentForm.language,
-        is_active: Boolean(documentForm.is_active)
-      };
-      if (!payload.stage_id) {
-        setError("Pick a stage before saving the document.");
-        return;
-      }
-      if (documentForm.id) {
-        await updateAdminStageDocument(documentForm.id, payload);
+      if (documentForm.source_type === "upload") {
+        if (!documentForm.id && !documentFile) {
+          setError("Choose a file to upload.");
+          return;
+        }
+        if (!documentForm.id) {
+          const formData = new FormData();
+          formData.append("stage_id", String(Number(documentForm.stage_id)));
+          formData.append("title", documentForm.title);
+          formData.append("document_type", documentForm.document_type);
+          formData.append("tags", documentForm.tags);
+          formData.append("language", documentForm.language);
+          formData.append("is_active", String(Boolean(documentForm.is_active)));
+          formData.append("file", documentFile);
+          await uploadAdminStageDocument(formData);
+        } else {
+          await updateAdminStageDocument(documentForm.id, {
+            stage_id: Number(documentForm.stage_id),
+            title: documentForm.title,
+            document_type: documentForm.document_type,
+            tags: documentForm.tags,
+            language: documentForm.language,
+            is_active: Boolean(documentForm.is_active)
+          });
+        }
       } else {
-        await createAdminStageDocument(payload);
+        const payload = {
+          stage_id: Number(documentForm.stage_id),
+          title: documentForm.title,
+          document_type: documentForm.document_type,
+          source_type: documentForm.source_type,
+          source_url: documentForm.source_type === "url" ? documentForm.source_url : "",
+          content_text: documentForm.source_type === "manual" ? documentForm.content_text : "",
+          tags: documentForm.tags,
+          language: documentForm.language,
+          is_active: Boolean(documentForm.is_active)
+        };
+        if (documentForm.id) {
+          await updateAdminStageDocument(documentForm.id, payload);
+        } else {
+          await createAdminStageDocument(payload);
+        }
       }
       resetDocument();
       await loadDocuments();
@@ -279,12 +347,14 @@ export default function AdminJourneyPage() {
     }
   };
 
-  const editDocument = (doc) =>
+  const editDocument = (doc) => {
     setDocumentForm({
       ...doc,
       stage_id: doc.stage_id,
       tags: Array.isArray(doc.tags) ? doc.tags.join(", ") : doc.tags || ""
     });
+    setDocumentFile(null);
+  };
 
   const removeDocument = async (doc) => {
     if (!window.confirm(`Delete document "${doc.title}"?`)) return;
@@ -294,6 +364,75 @@ export default function AdminJourneyPage() {
       await loadDocuments();
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || "Unable to delete document.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveGlobalSource = async (event) => {
+    event?.preventDefault?.();
+    setSaving(true);
+    setError("");
+    try {
+      if (globalSourceForm.source_type === "upload") {
+        if (!globalSourceForm.id && !globalSourceFile) {
+          setError("Choose a file to upload.");
+          return;
+        }
+        if (!globalSourceForm.id) {
+          const formData = new FormData();
+          formData.append("title", globalSourceForm.title);
+          formData.append("tags", globalSourceForm.tags);
+          formData.append("is_active", String(Boolean(globalSourceForm.is_active)));
+          formData.append("file", globalSourceFile);
+          await uploadAdminGlobalSource(formData);
+        } else {
+          await updateAdminGlobalSource(globalSourceForm.id, {
+            title: globalSourceForm.title,
+            tags: globalSourceForm.tags,
+            is_active: Boolean(globalSourceForm.is_active)
+          });
+        }
+      } else {
+        const payload = {
+          title: globalSourceForm.title,
+          source_type: globalSourceForm.source_type,
+          source_url: globalSourceForm.source_type === "url" ? globalSourceForm.source_url : "",
+          content_text: globalSourceForm.source_type === "manual" ? globalSourceForm.content_text : "",
+          tags: globalSourceForm.tags,
+          is_active: Boolean(globalSourceForm.is_active)
+        };
+        if (globalSourceForm.id) {
+          await updateAdminGlobalSource(globalSourceForm.id, payload);
+        } else {
+          await createAdminGlobalSource(payload);
+        }
+      }
+      resetGlobalSource();
+      await loadGlobalSources();
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.message || "Unable to save global source.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const editGlobalSource = (source) => {
+    setGlobalSourceForm({
+      ...source,
+      tags: Array.isArray(source.tags) ? source.tags.join(", ") : source.tags || ""
+    });
+    setGlobalSourceFile(null);
+  };
+
+  const removeGlobalSource = async (source) => {
+    if (!window.confirm(`Delete global source "${source.title}"?`)) return;
+    setSaving(true);
+    try {
+      await deleteAdminGlobalSource(source.id);
+      await loadGlobalSources();
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.message || "Unable to delete global source.");
     } finally {
       setSaving(false);
     }
@@ -317,9 +456,11 @@ export default function AdminJourneyPage() {
               <h2 className="mt-2 text-4xl font-black tracking-tight text-slate-950">Create startup phases and stages.</h2>
               <p className="mt-3 max-w-3xl text-base font-semibold leading-7 text-slate-500">
                 This panel maps directly to the <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm text-slate-700">journey_phases</code>,{" "}
-                <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm text-slate-700">journey_stages</code>, and{" "}
-                <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm text-slate-700">stage_documents</code> tables that power the Startup Journey
-                workspace. Add phases like Validation or Pitch, add ordered stages under each phase, then attach reference documents to a stage.
+                <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm text-slate-700">journey_stages</code>,{" "}
+                <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm text-slate-700">stage_documents</code>, and{" "}
+                <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm text-slate-700">knowledge_sources</code> tables that power the Startup
+                Journey workspace. Add phases like Validation or Pitch, add ordered stages under each phase, attach reference documents to a stage,
+                and add global sources that every phase and stage can draw on.
               </p>
             </div>
             <span className="inline-flex items-center gap-2 self-start rounded-full bg-orange-50 px-4 py-2 text-sm font-black text-orange-700">
@@ -333,12 +474,13 @@ export default function AdminJourneyPage() {
           <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</div>
         ) : null}
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
           <StatTile label="Total Phases" value={phases.length} detail="Journey phases defined." />
           <StatTile label="Active Phases" value={activePhaseCount} detail="Visible in the student workspace." tone="orange" />
           <StatTile label="Total Stages" value={stages.length} detail="Stages across all phases." tone="blue" />
           <StatTile label="Active Stages" value={activeStageCount} detail="Currently unlockable stages." tone="emerald" />
           <StatTile label="Stage Documents" value={documents.length} detail="Reference docs attached to stages." tone="orange" />
+          <StatTile label="Global Sources" value={globalSources.length} detail="Available across every phase." tone="blue" />
         </div>
 
         <div className="grid gap-6 xl:grid-cols-2">
@@ -697,10 +839,12 @@ export default function AdminJourneyPage() {
                   <select
                     value={documentForm.source_type}
                     onChange={(e) => setDocumentForm({ ...documentForm, source_type: e.target.value })}
+                    disabled={Boolean(documentForm.id)}
                     className={inputClass}
                   >
                     <option value="manual">Paste text</option>
                     <option value="url">Link (URL)</option>
+                    <option value="upload">Upload file</option>
                   </select>
                 </label>
               </div>
@@ -713,6 +857,23 @@ export default function AdminJourneyPage() {
                     placeholder="https://..."
                     className={inputClass}
                   />
+                </label>
+              ) : documentForm.source_type === "upload" ? (
+                <label className="grid gap-2">
+                  <FieldLabel>{documentForm.id ? "Replace File (not supported yet)" : "File"}</FieldLabel>
+                  <input
+                    type="file"
+                    disabled={Boolean(documentForm.id)}
+                    onChange={(e) => setDocumentFile(e.target.files?.[0] || null)}
+                    className={`${inputClass} file:mr-3 file:rounded-full file:border-0 file:bg-slate-950 file:px-3 file:py-1.5 file:text-xs file:font-black file:text-white`}
+                  />
+                  {documentForm.id ? (
+                    <p className="text-xs font-semibold text-slate-500">
+                      To swap the file, delete this document and upload a new one.
+                    </p>
+                  ) : documentFile ? (
+                    <p className="text-xs font-semibold text-slate-500">Selected: {documentFile.name}</p>
+                  ) : null}
                 </label>
               ) : (
                 <label className="grid gap-2">
@@ -759,7 +920,13 @@ export default function AdminJourneyPage() {
                   disabled={saving}
                   className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-[0_14px_30px_-16px_rgba(15,23,42,0.8)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  {saving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : documentForm.source_type === "upload" ? (
+                    <Upload className="h-4 w-4" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
                   {documentForm.id ? "Update Document" : "Add Document"}
                 </button>
                 <button
@@ -794,7 +961,17 @@ export default function AdminJourneyPage() {
                         <p className="mt-1 text-xs font-semibold text-slate-500">
                           {doc.phase_name} &middot; {doc.stage_name}
                         </p>
-                        {doc.source_type === "url" && doc.source_url ? (
+                        {doc.source_type === "upload" && doc.storage_url ? (
+                          <a
+                            href={doc.storage_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-orange-600 hover:underline"
+                          >
+                            <Upload className="h-3.5 w-3.5" />
+                            {doc.original_filename || "Uploaded file"}
+                          </a>
+                        ) : doc.source_type === "url" && doc.source_url ? (
                           <a
                             href={doc.source_url}
                             target="_blank"
@@ -833,7 +1010,183 @@ export default function AdminJourneyPage() {
             </div>
           </div>
         </Panel>
-        <MentorManager />
+
+        <Panel
+          title="Global Knowledge Sources"
+          description="Reference material available across every phase and stage, not tied to one specific stage."
+          icon={Globe2}
+        >
+          <div className="grid gap-6 xl:grid-cols-[1fr_1.2fr]">
+            <form onSubmit={saveGlobalSource} className="grid gap-4">
+              <label className="grid gap-2">
+                <FieldLabel>Title</FieldLabel>
+                <input
+                  value={globalSourceForm.title}
+                  onChange={(e) => setGlobalSourceForm({ ...globalSourceForm, title: e.target.value })}
+                  placeholder="e.g. India startup funding landscape"
+                  className={inputClass}
+                />
+              </label>
+              <label className="grid gap-2">
+                <FieldLabel>Source</FieldLabel>
+                <select
+                  value={globalSourceForm.source_type}
+                  onChange={(e) => setGlobalSourceForm({ ...globalSourceForm, source_type: e.target.value })}
+                  disabled={Boolean(globalSourceForm.id)}
+                  className={inputClass}
+                >
+                  <option value="manual">Paste text</option>
+                  <option value="url">Link (URL)</option>
+                  <option value="upload">Upload file</option>
+                </select>
+              </label>
+              {globalSourceForm.source_type === "url" ? (
+                <label className="grid gap-2">
+                  <FieldLabel>Source URL</FieldLabel>
+                  <input
+                    value={globalSourceForm.source_url}
+                    onChange={(e) => setGlobalSourceForm({ ...globalSourceForm, source_url: e.target.value })}
+                    placeholder="https://..."
+                    className={inputClass}
+                  />
+                </label>
+              ) : globalSourceForm.source_type === "upload" ? (
+                <label className="grid gap-2">
+                  <FieldLabel>{globalSourceForm.id ? "Replace File (not supported yet)" : "File"}</FieldLabel>
+                  <input
+                    type="file"
+                    disabled={Boolean(globalSourceForm.id)}
+                    onChange={(e) => setGlobalSourceFile(e.target.files?.[0] || null)}
+                    className={`${inputClass} file:mr-3 file:rounded-full file:border-0 file:bg-slate-950 file:px-3 file:py-1.5 file:text-xs file:font-black file:text-white`}
+                  />
+                  {globalSourceForm.id ? (
+                    <p className="text-xs font-semibold text-slate-500">
+                      To swap the file, delete this source and upload a new one.
+                    </p>
+                  ) : globalSourceFile ? (
+                    <p className="text-xs font-semibold text-slate-500">Selected: {globalSourceFile.name}</p>
+                  ) : null}
+                </label>
+              ) : (
+                <label className="grid gap-2">
+                  <FieldLabel>Content</FieldLabel>
+                  <textarea
+                    value={globalSourceForm.content_text}
+                    onChange={(e) => setGlobalSourceForm({ ...globalSourceForm, content_text: e.target.value })}
+                    rows={6}
+                    className={inputClass}
+                    placeholder="Paste reference text every student's mentor can draw on..."
+                  />
+                </label>
+              )}
+              <label className="grid gap-2">
+                <FieldLabel>Tags</FieldLabel>
+                <input
+                  value={globalSourceForm.tags}
+                  onChange={(e) => setGlobalSourceForm({ ...globalSourceForm, tags: e.target.value })}
+                  placeholder="funding, india, market"
+                  className={inputClass}
+                />
+              </label>
+              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={Boolean(globalSourceForm.is_active)}
+                  onChange={(e) => setGlobalSourceForm({ ...globalSourceForm, is_active: e.target.checked })}
+                  className="h-4 w-4"
+                />
+                Active
+              </label>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-[0_14px_30px_-16px_rgba(15,23,42,0.8)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {saving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : globalSourceForm.source_type === "upload" ? (
+                    <Upload className="h-4 w-4" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
+                  {globalSourceForm.id ? "Update Source" : "Add Global Source"}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetGlobalSource}
+                  className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50"
+                >
+                  Reset
+                </button>
+              </div>
+            </form>
+
+            <div className="space-y-3 xl:border-l xl:border-slate-100 xl:pl-6">
+              {globalSourcesLoading ? (
+                <p className="text-sm font-semibold text-slate-500">Loading global sources...</p>
+              ) : globalSources.length ? (
+                globalSources.map((source) => (
+                  <div key={source.id} className="rounded-[1.5rem] border border-slate-100 bg-slate-50 p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-base font-black text-slate-950">{source.title}</p>
+                          {!source.is_active ? (
+                            <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-rose-600">
+                              Inactive
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="mt-1 text-xs font-semibold text-slate-500">Global &middot; {source.source_type}</p>
+                        {source.source_type === "upload" && source.storage_url ? (
+                          <a
+                            href={source.storage_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-orange-600 hover:underline"
+                          >
+                            <Upload className="h-3.5 w-3.5" />
+                            {source.original_filename || "Uploaded file"}
+                          </a>
+                        ) : source.source_type === "url" && source.source_url ? (
+                          <a
+                            href={source.source_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-orange-600 hover:underline"
+                          >
+                            <Link2 className="h-3.5 w-3.5" />
+                            {source.source_url}
+                          </a>
+                        ) : (
+                          <p className="mt-2 line-clamp-2 text-sm font-medium text-slate-600">{source.content_text}</p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => editGlobalSource(source)}
+                          className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 transition hover:bg-slate-100"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeGlobalSource(source)}
+                          className="rounded-full border border-rose-200 bg-white p-2 text-rose-600 transition hover:bg-rose-50"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm font-semibold text-slate-500">No global sources yet — add the first one above.</p>
+              )}
+            </div>
+          </div>
+        </Panel>
       </div>
     </main>
   );

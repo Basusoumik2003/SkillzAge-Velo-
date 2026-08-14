@@ -1,6 +1,8 @@
 import jwt from "jsonwebtoken";
 import { config } from "../config/config.js";
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function requireAuth(req, res, next) {
   const header = String(req.headers.authorization || "");
   const [scheme, token] = header.split(" ");
@@ -16,8 +18,8 @@ export function requireAuth(req, res, next) {
       if (!config.jwtSecretKeyAlt) throw primaryError;
       payload = jwt.verify(token, config.jwtSecretKeyAlt, { algorithms: ["HS256"] });
     }
-    const userId = Number(payload?.sub);
-    if (!Number.isFinite(userId)) {
+    const userId = String(payload?.sub || "");
+    if (!UUID_PATTERN.test(userId)) {
       return res.status(401).json({ detail: "Invalid authorization token." });
     }
     req.auth = { userId };

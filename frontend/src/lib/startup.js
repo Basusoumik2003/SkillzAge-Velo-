@@ -74,3 +74,33 @@ export async function deleteAdminStageDocument(documentId) {
   const { data } = await adminApi.delete(`/startup/stage-documents/${documentId}`);
   return data;
 }
+
+export async function uploadAdminStageDocument(formData) {
+  const { data } = await adminApi.post("/startup/stage-documents/upload", formData);
+  return data;
+}
+
+export async function listAdminGlobalSources() {
+  const { data } = await adminApi.get("/startup/global-sources");
+  return data;
+}
+
+export async function createAdminGlobalSource(payload) {
+  const { data } = await adminApi.post("/startup/global-sources", payload);
+  return data;
+}
+
+export async function updateAdminGlobalSource(sourceId, payload) {
+  const { data } = await adminApi.put(`/startup/global-sources/${sourceId}`, payload);
+  return data;
+}
+
+export async function deleteAdminGlobalSource(sourceId) {
+  const { data } = await adminApi.delete(`/startup/global-sources/${sourceId}`);
+  return data;
+}
+
+export async function uploadAdminGlobalSource(formData) {
+  const { data } = await adminApi.post("/startup/global-sources/upload", formData);
+  return data;
+}
