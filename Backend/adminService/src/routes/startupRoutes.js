@@ -1,11 +1,24 @@
+import crypto from "crypto";
 import express from "express";
 import { pool } from "../config/db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { uploadToS3 } from "../services/s3Service.js";
+import { parseMultipartFormData } from "../utils/multipart.js";
 
 const router = express.Router();
 
 function normalizeText(value, maxLength = 4000) {
   return String(value || "").trim().slice(0, maxLength);
+}
+
+function safeExt(filename) {
+  const match = String(filename || "").toLowerCase().match(/\.[a-z0-9]{1,12}$/);
+  return match ? match[0] : "";
+}
+
+function parseBoolField(value) {
+  if (value === undefined) return undefined;
+  return value === "true" || value === "1" || value === true;
 }
 
 function normalizeList(value) {
@@ -148,7 +161,7 @@ async function fetchRetrievedContext({ userId, profileId, ideaId, phaseId, stage
 
   const [stageDocs, knowledgeSources, recentMessages, memoryRows] = await Promise.all([
     pool.query(
-      `SELECT id, title, document_type, source_type, source_url, original_filename, language, tags, content_text, created_at, updated_at
+      `SELECT id, title, document_type, source_type, source_url, storage_url, original_filename, language, tags, content_text, created_at, updated_at
        FROM stage_documents
        WHERE is_active = TRUE
          AND (
@@ -164,7 +177,7 @@ async function fetchRetrievedContext({ userId, profileId, ideaId, phaseId, stage
       [stageId, phaseId, questionLike]
     ),
     pool.query(
-      `SELECT id, source_scope, source_type, title, source_url, tags, content_text, metadata, created_at, updated_at
+      `SELECT id, source_scope, source_type, title, source_url, storage_url, original_filename, tags, content_text, metadata, created_at, updated_at
        FROM knowledge_sources
        WHERE is_active = TRUE
          AND (
@@ -837,6 +850,73 @@ router.post("/admin/startup/stage-documents", requireAuth, async (req, res, next
   }
 });
 
+router.post(
+  "/admin/startup/stage-documents/upload",
+  requireAuth,
+  express.raw({ type: "multipart/form-data", limit: "25mb" }),
+  async (req, res, next) => {
+    try {
+      await requireAdmin(req);
+      const contentType = String(req.headers["content-type"] || "");
+      if (!contentType.includes("multipart/form-data")) {
+        return res.status(400).json({ detail: "multipart/form-data request required." });
+      }
+
+      let parsed;
+      try {
+        parsed = parseMultipartFormData({ contentType, bodyBuffer: req.body });
+      } catch {
+        return res.status(400).json({ detail: "Invalid multipart form data." });
+      }
+
+      const stageId = normalizeInteger(parsed.fields?.stage_id, null);
+      const title = normalizeText(parsed.fields?.title, 240);
+      const file = parsed.files?.file;
+      if (!stageId) return res.status(400).json({ detail: "Stage is required." });
+      if (!title) return res.status(400).json({ detail: "Document title is required." });
+      if (!file?.buffer?.length) return res.status(400).json({ detail: "A file is required." });
+
+      const phaseIdRow = await pool.query("SELECT phase_id FROM journey_stages WHERE id = $1 LIMIT 1", [stageId]);
+      if (!phaseIdRow.rows.length) return res.status(404).json({ detail: "Stage not found." });
+
+      const documentType = STAGE_DOCUMENT_TYPES.includes(parsed.fields?.document_type) ? parsed.fields.document_type : "reference";
+      const publicId = `stage_doc_${crypto.randomBytes(8).toString("hex")}`;
+      const uploaded = await uploadToS3({
+        buffer: file.buffer,
+        filename: `${publicId}${safeExt(file.filename)}`,
+        folder: "internlabs/startup/stage-documents",
+        contentType: file.contentType,
+        publicId
+      });
+
+      const result = await pool.query(
+        `INSERT INTO stage_documents (
+          phase_id, stage_id, title, document_type, source_type, storage_url,
+          storage_public_id, original_filename, tags, language, is_active, created_by
+        )
+        VALUES ($1, $2, $3, $4, 'upload', $5, $6, $7, $8, COALESCE(NULLIF($9, ''), 'english'), COALESCE($10, TRUE), $11)
+        RETURNING *`,
+        [
+          phaseIdRow.rows[0].phase_id,
+          stageId,
+          title,
+          documentType,
+          uploaded.url,
+          uploaded.public_id,
+          normalizeText(file.filename, 255),
+          normalizeList(parsed.fields?.tags),
+          normalizeText(parsed.fields?.language, 20),
+          parseBoolField(parsed.fields?.is_active),
+          req.auth.userId
+        ]
+      );
+      res.status(201).json({ document: result.rows[0] });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 router.put("/admin/startup/stage-documents/:id", requireAuth, async (req, res, next) => {
   try {
     await requireAdmin(req);
@@ -895,6 +975,169 @@ router.delete("/admin/startup/stage-documents/:id", requireAuth, async (req, res
     const result = await pool.query("DELETE FROM stage_documents WHERE id = $1 RETURNING id", [id]);
     if (!result.rows[0]) return res.status(404).json({ detail: "Document not found." });
     res.json({ message: "Document deleted.", id: result.rows[0].id });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const KNOWLEDGE_SOURCE_TYPES = ["manual", "upload", "url", "seed", "web"];
+
+router.get("/admin/startup/global-sources", requireAuth, async (req, res, next) => {
+  try {
+    await requireAdmin(req);
+    const { rows } = await pool.query(
+      `SELECT ks.id, ks.source_scope, ks.source_type, ks.title, ks.source_url, ks.content_text,
+              ks.storage_url, ks.storage_public_id, ks.original_filename,
+              ks.tags, ks.is_active, ks.indexed_at, ks.created_at, ks.updated_at
+       FROM knowledge_sources ks
+       WHERE ks.source_scope = 'global'
+       ORDER BY ks.updated_at DESC, ks.id DESC`
+    );
+    res.json({ sources: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/admin/startup/global-sources", requireAuth, async (req, res, next) => {
+  try {
+    await requireAdmin(req);
+    const title = normalizeText(req.body?.title, 240);
+    if (!title) {
+      return res.status(400).json({ detail: "Title is required." });
+    }
+
+    const sourceType = KNOWLEDGE_SOURCE_TYPES.includes(req.body?.source_type) ? req.body.source_type : "manual";
+    const sourceUrl = normalizeText(req.body?.source_url || req.body?.sourceUrl, 2000);
+    const contentText = normalizeText(req.body?.content_text || req.body?.contentText, 40000);
+
+    if (sourceType === "url" && !sourceUrl) {
+      return res.status(400).json({ detail: "Source URL is required for a URL source." });
+    }
+    if (sourceType === "manual" && !contentText) {
+      return res.status(400).json({ detail: "Content text is required for a manual source." });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO knowledge_sources (
+        source_scope, source_type, title, source_url, content_text, tags, is_active
+      )
+      VALUES ('global', $1, $2, $3, $4, $5, COALESCE($6, TRUE))
+      RETURNING *`,
+      [
+        sourceType,
+        title,
+        sourceUrl,
+        contentText,
+        normalizeList(req.body?.tags),
+        typeof req.body?.is_active === "boolean" ? req.body.is_active : undefined
+      ]
+    );
+    res.status(201).json({ source: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post(
+  "/admin/startup/global-sources/upload",
+  requireAuth,
+  express.raw({ type: "multipart/form-data", limit: "25mb" }),
+  async (req, res, next) => {
+    try {
+      await requireAdmin(req);
+      const contentType = String(req.headers["content-type"] || "");
+      if (!contentType.includes("multipart/form-data")) {
+        return res.status(400).json({ detail: "multipart/form-data request required." });
+      }
+
+      let parsed;
+      try {
+        parsed = parseMultipartFormData({ contentType, bodyBuffer: req.body });
+      } catch {
+        return res.status(400).json({ detail: "Invalid multipart form data." });
+      }
+
+      const title = normalizeText(parsed.fields?.title, 240);
+      const file = parsed.files?.file;
+      if (!title) return res.status(400).json({ detail: "Title is required." });
+      if (!file?.buffer?.length) return res.status(400).json({ detail: "A file is required." });
+
+      const publicId = `global_source_${crypto.randomBytes(8).toString("hex")}`;
+      const uploaded = await uploadToS3({
+        buffer: file.buffer,
+        filename: `${publicId}${safeExt(file.filename)}`,
+        folder: "internlabs/startup/global-sources",
+        contentType: file.contentType,
+        publicId
+      });
+
+      const result = await pool.query(
+        `INSERT INTO knowledge_sources (
+          source_scope, source_type, title, storage_url, storage_public_id, original_filename, tags, is_active
+        )
+        VALUES ('global', 'upload', $1, $2, $3, $4, $5, COALESCE($6, TRUE))
+        RETURNING *`,
+        [
+          title,
+          uploaded.url,
+          uploaded.public_id,
+          normalizeText(file.filename, 255),
+          normalizeList(parsed.fields?.tags),
+          parseBoolField(parsed.fields?.is_active)
+        ]
+      );
+      res.status(201).json({ source: result.rows[0] });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+router.put("/admin/startup/global-sources/:id", requireAuth, async (req, res, next) => {
+  try {
+    await requireAdmin(req);
+    const id = normalizeInteger(req.params.id, null);
+    const sourceType = KNOWLEDGE_SOURCE_TYPES.includes(req.body?.source_type) ? req.body.source_type : null;
+
+    const result = await pool.query(
+      `UPDATE knowledge_sources
+       SET title = COALESCE(NULLIF($2, ''), title),
+           source_type = COALESCE($3, source_type),
+           source_url = COALESCE($4, source_url),
+           content_text = COALESCE($5, content_text),
+           tags = COALESCE($6, tags),
+           is_active = COALESCE($7, is_active),
+           updated_at = NOW()
+       WHERE id = $1 AND source_scope = 'global'
+       RETURNING *`,
+      [
+        id,
+        normalizeText(req.body?.title, 240),
+        sourceType,
+        req.body?.source_url !== undefined ? normalizeText(req.body.source_url, 2000) : null,
+        req.body?.content_text !== undefined ? normalizeText(req.body.content_text, 40000) : null,
+        Array.isArray(req.body?.tags) || typeof req.body?.tags === "string" ? normalizeList(req.body.tags) : null,
+        typeof req.body?.is_active === "boolean" ? req.body.is_active : null
+      ]
+    );
+    if (!result.rows[0]) return res.status(404).json({ detail: "Global source not found." });
+    res.json({ source: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/admin/startup/global-sources/:id", requireAuth, async (req, res, next) => {
+  try {
+    await requireAdmin(req);
+    const id = normalizeInteger(req.params.id, null);
+    const result = await pool.query(
+      "DELETE FROM knowledge_sources WHERE id = $1 AND source_scope = 'global' RETURNING id",
+      [id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ detail: "Global source not found." });
+    res.json({ message: "Global source deleted.", id: result.rows[0].id });
   } catch (error) {
     next(error);
   }

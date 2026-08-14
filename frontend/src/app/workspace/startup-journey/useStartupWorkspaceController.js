@@ -62,6 +62,7 @@ export default function useStartupWorkspaceController() {
   const [error, setError] = useState("");
   const [lastResult, setLastResult] = useState(null);
   const [stageDocuments, setStageDocuments] = useState([]);
+  const [knowledgeSources, setKnowledgeSources] = useState([]);
 
   const selectedPhase = useMemo(
     () => workspace.journey.find((phase) => Number(phase.id) === Number(activePhaseId)) || workspace.active_phase || workspace.journey[0] || null,
@@ -92,6 +93,7 @@ export default function useStartupWorkspaceController() {
         setActiveStageId(data?.active_stage?.id || data?.journey?.[0]?.stages?.[0]?.id || null);
         setMessages(mapMessages(data?.context?.recent_messages || []));
         setStageDocuments(Array.isArray(data?.context?.stage_documents) ? data.context.stage_documents : []);
+        setKnowledgeSources(Array.isArray(data?.context?.knowledge_sources) ? data.context.knowledge_sources : []);
         setProfileDraft((prev) => ({
           ...EMPTY_PROFILE,
           age: data?.profile?.age ?? "",
@@ -180,6 +182,7 @@ export default function useStartupWorkspaceController() {
       setMessages([...nextMessages, { role: "assistant", content: result.answer || "" }]);
       setBrowserQueries(Array.isArray(result.browser_search_queries) ? result.browser_search_queries : []);
       setStageDocuments(Array.isArray(result.retrieved_context?.stage_documents) ? result.retrieved_context.stage_documents : []);
+      setKnowledgeSources(Array.isArray(result.retrieved_context?.knowledge_sources) ? result.retrieved_context.knowledge_sources : []);
       setLastResult(result);
       return result;
     } catch (err) {
@@ -213,6 +216,7 @@ export default function useStartupWorkspaceController() {
     router,
     lastResult,
     contextSummary,
-    stageDocuments
+    stageDocuments,
+    knowledgeSources
   };
 }

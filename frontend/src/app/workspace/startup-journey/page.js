@@ -49,7 +49,8 @@ export default function StartupJourneyWorkspacePage() {
     answer,
     error,
     contextSummary,
-    stageDocuments
+    stageDocuments,
+    knowledgeSources
   } = controller;
 
   const phases = workspace.journey || [];
@@ -260,7 +261,17 @@ export default function StartupJourneyWorkspacePage() {
                         <FileText className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-slate-900">{doc.title}</p>
-                          {doc.source_url ? (
+                          {doc.storage_url ? (
+                            <a
+                              href={doc.storage_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-orange-600 hover:underline"
+                            >
+                              <Link2 className="h-3 w-3" />
+                              {doc.original_filename || "Open file"}
+                            </a>
+                          ) : doc.source_url ? (
                             <a
                               href={doc.source_url}
                               target="_blank"
@@ -280,6 +291,50 @@ export default function StartupJourneyWorkspacePage() {
                 ) : (
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
                     No reference documents for this stage yet.
+                  </div>
+                )}
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Global Knowledge Library">
+              <div className="grid gap-2">
+                {knowledgeSources.length ? (
+                  knowledgeSources.map((source) => (
+                    <div key={source.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                      <div className="flex items-start gap-2.5">
+                        <BrainCircuit className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-slate-900">{source.title}</p>
+                          {source.storage_url ? (
+                            <a
+                              href={source.storage_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-orange-600 hover:underline"
+                            >
+                              <Link2 className="h-3 w-3" />
+                              {source.original_filename || "Open file"}
+                            </a>
+                          ) : source.source_url ? (
+                            <a
+                              href={source.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-orange-600 hover:underline"
+                            >
+                              <Link2 className="h-3 w-3" />
+                              Open link
+                            </a>
+                          ) : source.content_text ? (
+                            <p className="mt-1 line-clamp-2 text-xs text-slate-500">{source.content_text}</p>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
+                    No global sources available yet.
                   </div>
                 )}
               </div>
