@@ -18,7 +18,4 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 
--- +down
-DROP INDEX IF EXISTS idx_users_email;
-DROP TABLE IF EXISTS users;
-DROP TYPE IF EXISTS gender_type;
+

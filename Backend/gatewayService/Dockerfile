@@ -1,0 +1,14 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY shared ./shared
+COPY gatewayService ./gatewayService
+
+WORKDIR /app/gatewayService
+
+RUN npm install
+
+EXPOSE 8001
+
+CMD ["npm", "start"]
