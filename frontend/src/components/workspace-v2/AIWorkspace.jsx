@@ -3,8 +3,8 @@
 import { AnimatePresence, motion } from "framer-motion";
 
 import ChatBox from "@/components/ChatBox";
-import GitHubConnect from "@/components/GitHubConnect";
-import ReviewPanel from "@/components/ReviewPanel";
+
+//import ReviewPanel from "@/components/ReviewPanel";
 import SystemDesignWorkspace from "@/components/SystemDesignWorkspace";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -61,19 +61,12 @@ export default function AIWorkspace(controller) {
     toast,
     activeStageStatusText,
     activeStageStatusClass,
-    activeStageRequiresGithub,
-    githubConnected,
     requestStageComplete,
     activeStageWorking,
     finalStageActive,
     hasNextPoint,
     projectName,
     catalogProject,
-    githubState,
-    handleConnectGithub,
-    githubLoading,
-    reviewLoading,
-    loadReviewState,
     companyProfileText,
     companyProfileUrl
   } = controller;
@@ -214,11 +207,7 @@ export default function AIWorkspace(controller) {
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-primary">Status:</span>
                         <Badge className={cn("border", activeStageStatusClass)}>{activeStageStatusText}</Badge>
-                        {activeStageRequiresGithub ? (
-                          <Badge variant={githubConnected ? "success" : "secondary"}>
-                            {githubConnected ? "GitHub connected" : "GitHub required"}
-                          </Badge>
-                        ) : null}
+                       
                         {activePhaseTimelineLabel ? (
                           <Badge className={cn("border", activePhaseTimelineTone)}>{activePhaseTimelineLabel}</Badge>
                         ) : null}
@@ -257,38 +246,6 @@ export default function AIWorkspace(controller) {
               className="h-full overflow-auto p-2"
             >
               <SystemDesignWorkspace projectName={projectName} />
-            </motion.div>
-          ) : null}
-
-          {centerMode === "github" ? (
-            <motion.div
-              key="github"
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.18 }}
-              className="h-full overflow-auto p-4"
-            >
-              <GitHubConnect repository={githubState.repository} onConnect={handleConnectGithub} loading={githubLoading} projectName={projectName} />
-            </motion.div>
-          ) : null}
-
-          {centerMode === "review" ? (
-            <motion.div
-              key="review"
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.18 }}
-              className="h-full overflow-auto p-4"
-            >
-              <ReviewPanel
-                latestReview={githubState.latestReview}
-                previousReviews={githubState.previousReviews}
-                commitHistory={githubState.commitHistory}
-                loading={reviewLoading || githubLoading}
-                onRefresh={loadReviewState}
-              />
             </motion.div>
           ) : null}
 

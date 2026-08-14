@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { disclaimerAccepted } from "@/components/DisclaimerModal";
 import { getMentorChatHistory, reviewStageDocument, saveLocalChatMessage, sendMentorMessage } from "@/lib/chat";
-import { connectGithub, getGithubReviews } from "@/lib/github";
+
 import {
   completeDashboardTask,
   getCatalogProject,

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, FileText, Layers, Link2, ListChecks, Loader2, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import useRequireAuth from "@/lib/useRequireAuth";
+import MentorManager from "@/components/adminDashboard/MentorManager";
 import {
   createAdminJourneyPhase,
   createAdminJourneyStage,
@@ -832,6 +833,7 @@ export default function AdminJourneyPage() {
             </div>
           </div>
         </Panel>
+        <MentorManager />
       </div>
     </main>
   );
