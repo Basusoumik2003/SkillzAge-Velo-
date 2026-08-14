@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, FileText, Globe2, Layers, Link2, ListChecks, Loader2, Pencil, Plus, Sparkles, Trash2, Upload } from "lucide-react";
 import useRequireAuth from "@/lib/useRequireAuth";
+import MentorManager from "@/components/adminDashboard/MentorManager";
 import {
   createAdminGlobalSource,
   createAdminJourneyPhase,
