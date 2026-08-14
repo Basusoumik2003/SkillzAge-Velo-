@@ -1187,6 +1187,8 @@ export default function AdminJourneyPage() {
             </div>
           </div>
         </Panel>
+
+        <MentorManager />
       </div>
     </main>
   );

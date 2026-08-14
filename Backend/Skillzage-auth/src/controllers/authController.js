@@ -16,7 +16,7 @@ async function signup(req, res, next) {
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
     const user = await userModel.createUser({ fullName, email, gender, passwordHash });
 
-    const token = signToken({ id: user.id, email: user.email });
+    const token = signToken({ sub: String(user.id), id: user.id, email: user.email });
 
     return res.status(201).json({
       success: true,
@@ -42,7 +42,7 @@ async function login(req, res, next) {
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
-    const token = signToken({ id: user.id, email: user.email });
+    const token = signToken({ sub: String(user.id), id: user.id, email: user.email });
 
     return res.status(200).json({
       success: true,
