@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, FileText, Globe2, Layers, Link2, ListChecks, Loader2, Pencil, Plus, Sparkles, Trash2, Upload } from "lucide-react";
 import useRequireAuth from "@/lib/useRequireAuth";
 import MentorManager from "@/components/adminDashboard/MentorManager";
+import StartupMentorManager from "@/components/adminDashboard/StartupMentorManager";
 import {
   createAdminGlobalSource,
   createAdminJourneyPhase,
@@ -17,6 +18,7 @@ import {
   listAdminGlobalSources,
   listAdminJourney,
   listAdminStageDocuments,
+  listAdminStartupMentors,
   updateAdminGlobalSource,
   updateAdminJourneyPhase,
   updateAdminJourneyStage,
@@ -33,6 +35,7 @@ const EMPTY_PHASE = {
   phase_description: "",
   phase_objective: "",
   intended_audience: "",
+  default_agent_key: "",
   is_active: true
 };
 
@@ -42,6 +45,7 @@ const EMPTY_STAGE = {
   stage_key: "",
   stage_order: 1,
   stage_name: "",
+  agent_key: "",
   stage_context: "",
   stage_objective: "",
   expected_outcome: "",
@@ -135,6 +139,7 @@ export default function AdminJourneyPage() {
   const [globalSourcesLoading, setGlobalSourcesLoading] = useState(true);
   const [globalSourceFile, setGlobalSourceFile] = useState(null);
   const [globalSourceForm, setGlobalSourceForm] = useState(EMPTY_GLOBAL_SOURCE);
+  const [mentors, setMentors] = useState([]);
 
   const phases = useMemo(() => journey || [], [journey]);
   const stages = useMemo(
@@ -181,10 +186,20 @@ export default function AdminJourneyPage() {
     }
   };
 
+  const loadMentors = async () => {
+    try {
+      const data = await listAdminStartupMentors();
+      setMentors(Array.isArray(data?.mentors) ? data.mentors : []);
+    } catch {
+      // Non-fatal — agent_key selects just fall back to a free-text feel with no options.
+    }
+  };
+
   useEffect(() => {
     loadJourney();
     loadDocuments();
     loadGlobalSources();
+    loadMentors();
   }, []);
 
   const resetPhase = () => setPhaseForm(EMPTY_PHASE);
@@ -210,6 +225,7 @@ export default function AdminJourneyPage() {
         phase_description: phaseForm.phase_description,
         phase_objective: phaseForm.phase_objective,
         intended_audience: phaseForm.intended_audience,
+        default_agent_key: phaseForm.default_agent_key,
         is_active: Boolean(phaseForm.is_active)
       };
       if (phaseForm.id) {
@@ -241,6 +257,7 @@ export default function AdminJourneyPage() {
         expected_outcome: stageForm.expected_outcome,
         readiness_criteria: stageForm.readiness_criteria,
         recommended_actions: stageForm.recommended_actions,
+        agent_key: stageForm.agent_key,
         is_active: Boolean(stageForm.is_active)
       };
       if (stageForm.id) {
@@ -544,6 +561,21 @@ export default function AdminJourneyPage() {
                   className={inputClass}
                 />
               </label>
+              <label className="grid gap-2">
+                <FieldLabel>Default Mentor</FieldLabel>
+                <select
+                  value={phaseForm.default_agent_key}
+                  onChange={(e) => setPhaseForm({ ...phaseForm, default_agent_key: e.target.value })}
+                  className={inputClass}
+                >
+                  <option value="">No default (falls back to global default mentor)</option>
+                  {mentors.map((mentor) => (
+                    <option key={mentor.id} value={mentor.agent_key}>
+                      {mentor.mentor_name} ({mentor.agent_key})
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-700">
                 <input
                   type="checkbox"
@@ -711,6 +743,21 @@ export default function AdminJourneyPage() {
                   rows={2}
                   className={inputClass}
                 />
+              </label>
+              <label className="grid gap-2">
+                <FieldLabel>Mentor</FieldLabel>
+                <select
+                  value={stageForm.agent_key}
+                  onChange={(e) => setStageForm({ ...stageForm, agent_key: e.target.value })}
+                  className={inputClass}
+                >
+                  <option value="">No specific mentor (falls back to phase/global default)</option>
+                  {mentors.map((mentor) => (
+                    <option key={mentor.id} value={mentor.agent_key}>
+                      {mentor.mentor_name} ({mentor.agent_key})
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-700">
                 <input
@@ -1187,6 +1234,8 @@ export default function AdminJourneyPage() {
             </div>
           </div>
         </Panel>
+
+        <StartupMentorManager />
 
         <MentorManager />
       </div>

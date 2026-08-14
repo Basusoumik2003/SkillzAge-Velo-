@@ -2,10 +2,62 @@ import crypto from "crypto";
 import express from "express";
 import { pool } from "../config/db.js";
 import { requireAuth } from "../middleware/auth.js";
+import { chatComplete } from "../services/llmService.js";
+import { summarizeSession } from "../services/memoryService.js";
+import { chunkText, cosineSimilarity, embedText, embedTexts, getEmbeddingModel } from "../services/ragService.js";
 import { uploadToS3 } from "../services/s3Service.js";
+import { runWebSearchBatch, questionNeedsWebSearch } from "../services/webSearchService.js";
+import { extractTextFromFile, extractTextFromUrl } from "../utils/textExtraction.js";
 import { parseMultipartFormData } from "../utils/multipart.js";
 
 const router = express.Router();
+
+async function indexChunks({ table, idColumn, recordId, text }) {
+  const chunks = chunkText(text);
+  await pool.query(`DELETE FROM ${table} WHERE ${idColumn} = $1`, [recordId]);
+  if (!chunks.length) return;
+
+  const vectors = await embedTexts(chunks);
+  const model = vectors.some(Boolean) ? getEmbeddingModel() : "";
+  for (let index = 0; index < chunks.length; index += 1) {
+    const vector = vectors[index] || null;
+    await pool.query(
+      `INSERT INTO ${table} (${idColumn}, chunk_index, chunk_text, token_count, embedding_model, embedding, embedding_dimension)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [recordId, index, chunks[index], Math.ceil(chunks[index].length / 4), model, vector, vector?.length || 0]
+    );
+  }
+}
+
+async function indexStageDocument(stageDocumentId, text) {
+  if (!text) {
+    await pool.query("DELETE FROM stage_document_chunks WHERE stage_document_id = $1", [stageDocumentId]);
+    return;
+  }
+  await indexChunks({ table: "stage_document_chunks", idColumn: "stage_document_id", recordId: stageDocumentId, text });
+}
+
+async function indexKnowledgeSource(sourceId, text) {
+  if (!text) {
+    await pool.query("DELETE FROM knowledge_chunks WHERE source_id = $1", [sourceId]);
+    return;
+  }
+  await indexChunks({ table: "knowledge_chunks", idColumn: "source_id", recordId: sourceId, text });
+}
+
+async function retrieveTopChunks({ table, idColumn, joinIds, questionEmbedding, limit }) {
+  if (!questionEmbedding || !joinIds.length) return [];
+  const { rows } = await pool.query(
+    `SELECT ${idColumn} AS record_id, chunk_text, embedding
+     FROM ${table}
+     WHERE ${idColumn} = ANY($1::bigint[]) AND embedding IS NOT NULL`,
+    [joinIds]
+  );
+  return rows
+    .map((row) => ({ recordId: row.record_id, chunkText: row.chunk_text, score: cosineSimilarity(questionEmbedding, row.embedding) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
 
 function normalizeText(value, maxLength = 4000) {
   return String(value || "").trim().slice(0, maxLength);
@@ -63,7 +115,7 @@ async function requireAdmin(req) {
 async function fetchPhaseRows() {
   const { rows } = await pool.query(
     `SELECT id, phase_key, phase_order, phase_name, phase_description, phase_objective,
-            intended_audience, is_active, created_by, created_at, updated_at
+            intended_audience, default_agent_key, is_active, created_by, created_at, updated_at
      FROM journey_phases
      ORDER BY phase_order ASC, id ASC`
   );
@@ -73,12 +125,46 @@ async function fetchPhaseRows() {
 async function fetchStageRows() {
   const { rows } = await pool.query(
     `SELECT id, phase_id, stage_key, stage_order, stage_name, stage_context, stage_objective,
-            expected_outcome, readiness_criteria, recommended_actions, is_active,
+            expected_outcome, readiness_criteria, recommended_actions, agent_key, is_active,
             created_by, created_at, updated_at
      FROM journey_stages
      ORDER BY phase_id ASC, stage_order ASC, id ASC`
   );
   return rows;
+}
+
+/**
+ * Resolves which startup_mentors persona should answer a question for a
+ * given phase/stage. Order: stage.agent_key -> phase.default_agent_key ->
+ * the startup_mentors row marked is_default -> a hardcoded last resort.
+ * Never throws — a missing/misconfigured mentor roster should never break
+ * the chat flow.
+ */
+async function resolveMentorForStage({ phase, stage }) {
+  const candidateKeys = [stage?.agent_key, phase?.default_agent_key].map((k) => String(k || "").trim()).filter(Boolean);
+
+  if (candidateKeys.length) {
+    const { rows } = await pool.query(
+      `SELECT * FROM startup_mentors WHERE agent_key = ANY($1::text[]) ORDER BY array_position($1::text[], agent_key) LIMIT 1`,
+      [candidateKeys]
+    );
+    if (rows[0]) return { mentor: rows[0], resolution: stage?.agent_key ? "stage" : "phase_default" };
+  }
+
+  const defaultRow = await pool.query("SELECT * FROM startup_mentors WHERE is_default = TRUE LIMIT 1");
+  if (defaultRow.rows[0]) return { mentor: defaultRow.rows[0], resolution: "global_default" };
+
+  return {
+    mentor: {
+      agent_key: "general_startup_mentor",
+      mentor_name: "Startup Mentor",
+      role: "Generalist startup coach for early-stage student founders",
+      goal: "Help the student make progress on their current phase and stage without doing the work for them",
+      backstory: "An experienced startup mentor who has guided many first-time student founders through idea validation, building, and launch.",
+      output_format: "markdown"
+    },
+    resolution: "hardcoded_fallback"
+  };
 }
 
 function nestJourney(phases, stages) {
@@ -160,10 +246,35 @@ async function getOrCreateSession({ userId, profileId, ideaId, phaseId, stageId,
   return created.rows[0].id;
 }
 
+/** Reranks candidate rows by embedding similarity to the question. Falls back to the original (ILIKE) order untouched when no embedding is available. */
+async function rerankByEmbedding({ rows, chunkTable, chunkIdColumn, questionEmbedding, limit }) {
+  if (!questionEmbedding || !rows.length) return rows.slice(0, limit);
+
+  const best = await retrieveTopChunks({
+    table: chunkTable,
+    idColumn: chunkIdColumn,
+    joinIds: rows.map((row) => row.id),
+    questionEmbedding,
+    limit: rows.length
+  });
+  if (!best.length) return rows.slice(0, limit);
+
+  const bestScoreByRecordId = new Map();
+  for (const chunk of best) {
+    if (!bestScoreByRecordId.has(chunk.recordId) || chunk.score > bestScoreByRecordId.get(chunk.recordId)) {
+      bestScoreByRecordId.set(chunk.recordId, chunk.score);
+    }
+  }
+
+  return [...rows]
+    .sort((a, b) => (bestScoreByRecordId.get(b.id) ?? -1) - (bestScoreByRecordId.get(a.id) ?? -1))
+    .slice(0, limit);
+}
+
 async function fetchRetrievedContext({ userId, profileId, ideaId, phaseId, stageId, question }) {
   const questionLike = `%${normalizeText(question, 200)}%`;
 
-  const [stageDocs, knowledgeSources, recentMessages, memoryRows] = await Promise.all([
+  const [stageDocsCandidates, knowledgeSourcesCandidates, recentMessages, memoryRows, questionEmbedding] = await Promise.all([
     pool.query(
       `SELECT id, title, document_type, source_type, source_url, storage_url, original_filename, language, tags, content_text, created_at, updated_at
        FROM stage_documents
@@ -177,7 +288,7 @@ async function fetchRetrievedContext({ userId, profileId, ideaId, phaseId, stage
        ORDER BY
          CASE WHEN stage_id = $1 THEN 0 WHEN phase_id = $2 THEN 1 ELSE 2 END,
          updated_at DESC
-       LIMIT 8`,
+       LIMIT 20`,
       [stageId, phaseId, questionLike]
     ),
     pool.query(
@@ -202,7 +313,7 @@ async function fetchRetrievedContext({ userId, profileId, ideaId, phaseId, stage
            ELSE 4
          END,
          updated_at DESC
-       LIMIT 8`,
+       LIMIT 20`,
       [userId, ideaId, stageId, phaseId, questionLike]
     ),
     pool.query(
@@ -228,47 +339,140 @@ async function fetchRetrievedContext({ userId, profileId, ideaId, phaseId, stage
        ORDER BY updated_at DESC, id DESC
        LIMIT 6`,
       [userId, profileId, ideaId, phaseId, stageId]
-    )
+    ),
+    embedText(question)
+  ]);
+
+  const [stageDocuments, knowledgeSources] = await Promise.all([
+    rerankByEmbedding({
+      rows: stageDocsCandidates.rows,
+      chunkTable: "stage_document_chunks",
+      chunkIdColumn: "stage_document_id",
+      questionEmbedding,
+      limit: 8
+    }),
+    rerankByEmbedding({
+      rows: knowledgeSourcesCandidates.rows,
+      chunkTable: "knowledge_chunks",
+      chunkIdColumn: "source_id",
+      questionEmbedding,
+      limit: 8
+    })
   ]);
 
   return {
-    stage_documents: stageDocs.rows,
-    knowledge_sources: knowledgeSources.rows,
+    stage_documents: stageDocuments,
+    knowledge_sources: knowledgeSources,
     recent_messages: recentMessages.rows.reverse(),
-    memory_summaries: memoryRows.rows
+    memory_summaries: memoryRows.rows,
+    retrieval_mode: questionEmbedding ? "embedding_rerank" : "lexical_ilike"
   };
 }
 
-function buildDraftAnswer({ profile, phase, stage, question, context }) {
+const STARTUP_COACHING_GUARDRAIL = `You are an AI startup mentor coaching a student founder inside a structured program.
+Rules you always follow:
+- Coach step by step. Never hand over a finished business plan, pitch deck, or "do it for them" answer — ask a clarifying question or point to the next small action instead.
+- Ground your answer in the provided stage context and retrieved sources when they're relevant; say so briefly when you use them ("Based on the market note you have on file...").
+- If web search results are provided, you may cite them briefly, but don't invent facts or sources that weren't given to you.
+- Keep answers focused on the student's current phase/stage — redirect gently if the question is far outside scope.
+- Warm, encouraging, conversational tone. No corporate boilerplate, no emoji spam.
+- If you don't have enough information to answer well, say what's missing and ask for it.`;
+
+function buildMentorSystemPrompt({ mentor, phase, stage, profile, context, webResults, memorySummary }) {
+  const sections = [STARTUP_COACHING_GUARDRAIL];
+
+  sections.push(
+    [
+      `You are "${mentor.mentor_name}".`,
+      `Role: ${mentor.role}`,
+      `Goal: ${mentor.goal}`,
+      `Backstory: ${mentor.backstory}`
+    ].join("\n")
+  );
+
+  if (phase || stage) {
+    sections.push(
+      [
+        "Current journey position:",
+        phase ? `Phase: ${phase.phase_name} — ${phase.phase_objective || phase.phase_description || ""}` : "",
+        stage ? `Stage: ${stage.stage_name} — ${stage.stage_objective || stage.stage_context || ""}` : "",
+        stage?.expected_outcome ? `Expected outcome for this stage: ${stage.expected_outcome}` : "",
+        stage?.readiness_criteria ? `Readiness criteria to move on: ${stage.readiness_criteria}` : ""
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+  }
+
+  if (profile) {
+    sections.push(
+      [
+        "Student profile:",
+        profile.startup_stage ? `Startup stage: ${String(profile.startup_stage).replaceAll("_", " ")}` : "",
+        profile.goal_type ? `Goal type: ${profile.goal_type}` : "",
+        profile.idea_title ? `Idea: ${profile.idea_title}` : "",
+        profile.problem_statement ? `Problem statement: ${profile.problem_statement}` : "",
+        profile.preferred_language ? `Preferred language: ${profile.preferred_language}` : ""
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+  }
+
+  if (context?.stage_documents?.length || context?.knowledge_sources?.length) {
+    const docLines = [
+      ...(context.stage_documents || []).map((doc) => `- [Stage doc] ${doc.title}: ${String(doc.content_text || "").slice(0, 600)}`),
+      ...(context.knowledge_sources || []).map((src) => `- [Knowledge] ${src.title}: ${String(src.content_text || "").slice(0, 600)}`)
+    ].filter((line) => line.length > 20);
+    if (docLines.length) sections.push(`Retrieved reference material (use if relevant):\n${docLines.slice(0, 10).join("\n")}`);
+  }
+
+  if (webResults?.length) {
+    sections.push(`Web search results (use if relevant, cite briefly):\n${webResults.map((r) => `- ${r.title} (${r.url}): ${r.snippet}`).join("\n")}`);
+  }
+
+  if (memorySummary) {
+    sections.push(`Summary of the conversation so far: ${memorySummary}`);
+  }
+
+  return sections.join("\n\n");
+}
+
+function buildFallbackAnswer({ profile, phase, stage, question, context }) {
   const lines = [];
   const name = profile?.full_name || "there";
   const stageName = stage?.stage_name || "your current stage";
   const phaseName = phase?.phase_name || "your current phase";
   lines.push(`Hi ${name}, I mapped your question to ${phaseName} / ${stageName}.`);
   lines.push(`Question: ${question}`);
-
-  if (profile?.startup_stage) {
-    lines.push(`Profile context: ${profile.startup_stage.replaceAll("_", " ")} stage, ${profile.preferred_language || "english"} language, ${profile.goal_type || "commercial"} goal.`);
-  }
-
-  if (context.stage_documents.length) {
-    lines.push(`I found ${context.stage_documents.length} stage documents that can support this answer.`);
-  }
-
-  if (context.knowledge_sources.length) {
-    lines.push(`I also found ${context.knowledge_sources.length} knowledge sources across your profile, phase, or global library.`);
-  }
-
-  lines.push("Next step: I can refine this further with a focused browser search and deeper retrieval if you want a more evidence-heavy answer.");
+  lines.push("I couldn't reach the AI model just now, so here's a placeholder while that's unavailable — please try again shortly.");
+  if (context.stage_documents.length) lines.push(`I did find ${context.stage_documents.length} stage documents that can support this answer.`);
+  if (context.knowledge_sources.length) lines.push(`I also found ${context.knowledge_sources.length} knowledge sources that may help.`);
   return lines.join("\n\n");
 }
 
-async function upsertSessionMemory({ sessionId, userId, profileId, ideaId, phaseId, stageId, question, answer, context }) {
-  const summary = [
-    `Stage: ${stageId || "none"}`,
-    `Question: ${question}`,
-    `Answer focus: ${answer.slice(0, 240)}`
-  ].join(" | ");
+/** Real LLM answer generation. Falls back to a templated answer if the LLM call fails for any reason — never a hard error for the student. */
+async function generateMentorAnswer({ mentor, profile, phase, stage, question, context, webResults, memorySummary, recentMessages }) {
+  const systemPrompt = buildMentorSystemPrompt({ mentor, phase, stage, profile, context, webResults, memorySummary });
+  const history = (recentMessages || [])
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .slice(-6)
+    .map((m) => ({ role: m.role, content: String(m.content || "").slice(0, 2000) }));
+
+  try {
+    const { text, model } = await chatComplete({
+      systemPrompt,
+      messages: [...history, { role: "user", content: question }],
+      temperature: 0.5
+    });
+    return { answer: text, model, usedLlm: true };
+  } catch {
+    return { answer: buildFallbackAnswer({ profile, phase, stage, question, context }), model: "startup-query-fallback", usedLlm: false };
+  }
+}
+
+async function upsertSessionMemory({ sessionId, userId, profileId, ideaId, phaseId, stageId, question, answer, context, existingSummary }) {
+  const { summary, generatedByLlm } = await summarizeSession({ existingSummary, question, answer });
 
   await pool.query(
     `UPDATE conversation_sessions
@@ -280,6 +484,7 @@ async function upsertSessionMemory({ sessionId, userId, profileId, ideaId, phase
     [sessionId, summary, JSON.stringify({
       last_question: question,
       last_answer_preview: answer.slice(0, 500),
+      summary_generated_by_llm: generatedByLlm,
       retrieved_counts: {
         stage_documents: context.stage_documents.length,
         knowledge_sources: context.knowledge_sources.length,
@@ -298,7 +503,7 @@ async function upsertSessionMemory({ sessionId, userId, profileId, ideaId, phase
       question,
       JSON.stringify({ phase_id: phaseId, stage_id: stageId }),
       answer,
-      JSON.stringify({ phase_id: phaseId, stage_id: stageId, generated_by: "startup-query-skeleton" })
+      JSON.stringify({ phase_id: phaseId, stage_id: stageId })
     ]
   );
 
@@ -315,9 +520,11 @@ async function upsertSessionMemory({ sessionId, userId, profileId, ideaId, phase
       stageId || null,
       summary,
       JSON.stringify([question, answer.slice(0, 240)]),
-      JSON.stringify({ context_counts: { stage_documents: context.stage_documents.length, knowledge_sources: context.knowledge_sources.length } })
+      JSON.stringify({ generated_by_llm: generatedByLlm, context_counts: { stage_documents: context.stage_documents.length, knowledge_sources: context.knowledge_sources.length } })
     ]
   );
+
+  return summary;
 }
 
 router.get("/startup/workspace", requireAuth, async (req, res, next) => {
@@ -513,14 +720,20 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
       language: profile?.preferred_language || "english"
     });
 
-    const context = await fetchRetrievedContext({
-      userId,
-      profileId: profile?.id || null,
-      ideaId: profile?.idea_id || null,
-      phaseId: phase?.id || null,
-      stageId: stage?.id || null,
-      question
-    });
+    const [context, existingSessionRow, { mentor, resolution }] = await Promise.all([
+      fetchRetrievedContext({
+        userId,
+        profileId: profile?.id || null,
+        ideaId: profile?.idea_id || null,
+        phaseId: phase?.id || null,
+        stageId: stage?.id || null,
+        question
+      }),
+      pool.query("SELECT memory_summary FROM conversation_sessions WHERE id = $1", [sessionId]),
+      resolveMentorForStage({ phase, stage })
+    ]);
+    const existingSummary = existingSessionRow.rows[0]?.memory_summary || "";
+    const recentMessages = [...context.recent_messages];
 
     const browserSearchQueries = [
       `${phase?.phase_name || profile?.startup_stage || "startup"} ${stage?.stage_name || ""} ${question}`.trim(),
@@ -528,9 +741,25 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
       `${profile?.interests || ""} ${question}`.trim()
     ].filter(Boolean);
 
-    const answer = buildDraftAnswer({ profile, phase, stage, question, context });
+    let webResults = [];
+    const shouldSearchWeb = questionNeedsWebSearch(question);
+    if (shouldSearchWeb) {
+      webResults = await runWebSearchBatch(browserSearchQueries.slice(0, 2));
+    }
 
-    await upsertSessionMemory({
+    const { answer, model, usedLlm } = await generateMentorAnswer({
+      mentor,
+      profile,
+      phase,
+      stage,
+      question,
+      context,
+      webResults,
+      memorySummary: existingSummary,
+      recentMessages
+    });
+
+    const newSummary = await upsertSessionMemory({
       sessionId,
       userId,
       profileId: profile?.id || null,
@@ -539,8 +768,12 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
       stageId: stage?.id || null,
       question,
       answer,
-      context
+      context,
+      existingSummary
     });
+
+    const usedMemory = Boolean(existingSummary);
+    const usedWebSearch = webResults.length > 0;
 
     const agentRun = await pool.query(
       `INSERT INTO agent_runs (
@@ -559,18 +792,44 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
         stage?.id || null,
         question,
         JSON.stringify({
+          agent_key: mentor.agent_key,
+          mentor_name: mentor.mentor_name,
+          resolution,
+          used_llm: usedLlm,
           profile_stage: profile?.startup_stage || "",
           phase_key: phase?.phase_key || "",
           stage_key: stage?.stage_key || "",
-          browser_search_queries: browserSearchQueries
+          browser_search_queries: browserSearchQueries,
+          web_search_triggered: shouldSearchWeb
         }),
         JSON.stringify(context),
         answer,
-        "startup-query-skeleton",
-        Boolean(context.memory_summaries.length),
-        Boolean(context.memory_summaries.length || context.stage_documents.length || context.knowledge_sources.length)
+        model,
+        usedWebSearch,
+        usedMemory
       ]
     );
+
+    if (webResults.length) {
+      await Promise.all(
+        webResults.map((result) =>
+          pool.query(
+            `INSERT INTO web_search_results (agent_run_id, query_text, source_name, result_title, result_url, snippet, rank_position, published_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              agentRun.rows[0].id,
+              question,
+              new URL(result.url || "https://unknown").hostname,
+              result.title,
+              result.url,
+              result.snippet,
+              result.rank,
+              result.published_at
+            ]
+          ).catch(() => {})
+        )
+      );
+    }
 
     res.json({
       session_id: sessionId,
@@ -578,9 +837,12 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
       profile,
       phase,
       stage,
+      mentor: { agent_key: mentor.agent_key, mentor_name: mentor.mentor_name, avatar_url: mentor.avatar_url || "" },
       answer,
       retrieved_context: context,
       browser_search_queries: browserSearchQueries,
+      web_results: webResults,
+      memory_summary: newSummary,
       next_steps: [
         "Review the stage-specific references above.",
         "If you want, ask a narrower follow-up question.",
@@ -614,9 +876,9 @@ router.post("/admin/startup/phases", requireAuth, async (req, res, next) => {
     const result = await pool.query(
       `INSERT INTO journey_phases (
         phase_key, phase_order, phase_name, phase_description, phase_objective,
-        intended_audience, is_active, created_by
+        intended_audience, default_agent_key, is_active, created_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE), $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, TRUE), $9)
       RETURNING *`,
       [
         phaseKey,
@@ -625,6 +887,7 @@ router.post("/admin/startup/phases", requireAuth, async (req, res, next) => {
         normalizeText(req.body?.phase_description || req.body?.phaseDescription, 12000),
         normalizeText(req.body?.phase_objective || req.body?.phaseObjective, 12000),
         normalizeText(req.body?.intended_audience || req.body?.intendedAudience, 4000),
+        normalizeText(req.body?.default_agent_key || req.body?.defaultAgentKey, 80),
         typeof req.body?.is_active === "boolean" ? req.body.is_active : undefined,
         req.auth.userId
       ]
@@ -647,7 +910,8 @@ router.put("/admin/startup/phases/:id", requireAuth, async (req, res, next) => {
            phase_description = COALESCE($5, phase_description),
            phase_objective = COALESCE($6, phase_objective),
            intended_audience = COALESCE($7, intended_audience),
-           is_active = COALESCE($8, is_active),
+           default_agent_key = COALESCE($8, default_agent_key),
+           is_active = COALESCE($9, is_active),
            updated_at = NOW()
        WHERE id = $1
        RETURNING *`,
@@ -659,6 +923,9 @@ router.put("/admin/startup/phases/:id", requireAuth, async (req, res, next) => {
         normalizeText(req.body?.phase_description || req.body?.phaseDescription, 12000),
         normalizeText(req.body?.phase_objective || req.body?.phaseObjective, 12000),
         normalizeText(req.body?.intended_audience || req.body?.intendedAudience, 4000),
+        req.body?.default_agent_key !== undefined || req.body?.defaultAgentKey !== undefined
+          ? normalizeText(req.body?.default_agent_key || req.body?.defaultAgentKey, 80)
+          : null,
         typeof req.body?.is_active === "boolean" ? req.body.is_active : null
       ]
     );
@@ -695,9 +962,9 @@ router.post("/admin/startup/stages", requireAuth, async (req, res, next) => {
       `INSERT INTO journey_stages (
         phase_id, stage_key, stage_order, stage_name, stage_context,
         stage_objective, expected_outcome, readiness_criteria, recommended_actions,
-        is_active, created_by
+        agent_key, is_active, created_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, TRUE), $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, TRUE), $12)
       RETURNING *`,
       [
         phaseId,
@@ -709,6 +976,7 @@ router.post("/admin/startup/stages", requireAuth, async (req, res, next) => {
         normalizeText(req.body?.expected_outcome || req.body?.expectedOutcome, 12000),
         normalizeText(req.body?.readiness_criteria || req.body?.readinessCriteria, 12000),
         normalizeText(req.body?.recommended_actions || req.body?.recommendedActions, 12000),
+        normalizeText(req.body?.agent_key || req.body?.agentKey, 80),
         typeof req.body?.is_active === "boolean" ? req.body.is_active : undefined,
         req.auth.userId
       ]
@@ -734,7 +1002,8 @@ router.put("/admin/startup/stages/:id", requireAuth, async (req, res, next) => {
            expected_outcome = COALESCE($8, expected_outcome),
            readiness_criteria = COALESCE($9, readiness_criteria),
            recommended_actions = COALESCE($10, recommended_actions),
-           is_active = COALESCE($11, is_active),
+           agent_key = COALESCE($11, agent_key),
+           is_active = COALESCE($12, is_active),
            updated_at = NOW()
        WHERE id = $1
        RETURNING *`,
@@ -749,6 +1018,9 @@ router.put("/admin/startup/stages/:id", requireAuth, async (req, res, next) => {
         normalizeText(req.body?.expected_outcome || req.body?.expectedOutcome, 12000),
         normalizeText(req.body?.readiness_criteria || req.body?.readinessCriteria, 12000),
         normalizeText(req.body?.recommended_actions || req.body?.recommendedActions, 12000),
+        req.body?.agent_key !== undefined || req.body?.agentKey !== undefined
+          ? normalizeText(req.body?.agent_key || req.body?.agentKey, 80)
+          : null,
         typeof req.body?.is_active === "boolean" ? req.body.is_active : null
       ]
     );
@@ -766,6 +1038,122 @@ router.delete("/admin/startup/stages/:id", requireAuth, async (req, res, next) =
     const result = await pool.query("DELETE FROM journey_stages WHERE id = $1 RETURNING id", [id]);
     if (!result.rows[0]) return res.status(404).json({ detail: "Stage not found." });
     res.json({ message: "Stage deleted.", id: result.rows[0].id });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/admin/startup/mentors", requireAuth, async (req, res, next) => {
+  try {
+    await requireAdmin(req);
+    const { rows } = await pool.query("SELECT * FROM startup_mentors ORDER BY is_default DESC, mentor_name ASC");
+    res.json({ mentors: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/admin/startup/mentors", requireAuth, async (req, res, next) => {
+  try {
+    await requireAdmin(req);
+    const agentKey = normalizeText(req.body?.agent_key || req.body?.agentKey, 80);
+    const mentorName = normalizeText(req.body?.mentor_name || req.body?.mentorName, 120);
+    const role = normalizeText(req.body?.role, 4000);
+    const goal = normalizeText(req.body?.goal, 4000);
+    const backstory = normalizeText(req.body?.backstory, 12000);
+    if (!agentKey || !mentorName || !role || !goal || !backstory) {
+      return res.status(400).json({ detail: "agent_key, mentor_name, role, goal, and backstory are all required." });
+    }
+
+    const isDefault = req.body?.is_default === true || req.body?.isDefault === true;
+    if (isDefault) {
+      await pool.query("UPDATE startup_mentors SET is_default = FALSE WHERE is_default = TRUE");
+    }
+
+    const result = await pool.query(
+      `INSERT INTO startup_mentors (
+        agent_key, mentor_name, role, goal, backstory, avatar_url, output_format, is_default, is_hidden, created_by
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, COALESCE(NULLIF($7, ''), 'markdown'), $8, $9, $10)
+      RETURNING *`,
+      [
+        agentKey,
+        mentorName,
+        role,
+        goal,
+        backstory,
+        normalizeText(req.body?.avatar_url || req.body?.avatarUrl, 2000),
+        normalizeText(req.body?.output_format || req.body?.outputFormat, 20),
+        isDefault,
+        Boolean(req.body?.is_hidden === true || req.body?.isHidden === true),
+        req.auth.userId
+      ]
+    );
+    res.status(201).json({ mentor: result.rows[0] });
+  } catch (error) {
+    if (error?.code === "23505") {
+      return res.status(409).json({ detail: "A mentor with that agent key already exists." });
+    }
+    next(error);
+  }
+});
+
+router.put("/admin/startup/mentors/:id", requireAuth, async (req, res, next) => {
+  try {
+    await requireAdmin(req);
+    const id = normalizeInteger(req.params.id, null);
+    const isDefaultProvided = req.body?.is_default !== undefined || req.body?.isDefault !== undefined;
+    const isDefault = req.body?.is_default === true || req.body?.isDefault === true;
+    if (isDefaultProvided && isDefault) {
+      await pool.query("UPDATE startup_mentors SET is_default = FALSE WHERE is_default = TRUE AND id != $1", [id]);
+    }
+
+    const result = await pool.query(
+      `UPDATE startup_mentors
+       SET agent_key = COALESCE(NULLIF($2, ''), agent_key),
+           mentor_name = COALESCE(NULLIF($3, ''), mentor_name),
+           role = COALESCE(NULLIF($4, ''), role),
+           goal = COALESCE(NULLIF($5, ''), goal),
+           backstory = COALESCE(NULLIF($6, ''), backstory),
+           avatar_url = COALESCE($7, avatar_url),
+           output_format = COALESCE(NULLIF($8, ''), output_format),
+           is_default = COALESCE($9, is_default),
+           is_hidden = COALESCE($10, is_hidden),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        id,
+        normalizeText(req.body?.agent_key || req.body?.agentKey, 80),
+        normalizeText(req.body?.mentor_name || req.body?.mentorName, 120),
+        normalizeText(req.body?.role, 4000),
+        normalizeText(req.body?.goal, 4000),
+        normalizeText(req.body?.backstory, 12000),
+        req.body?.avatar_url !== undefined || req.body?.avatarUrl !== undefined
+          ? normalizeText(req.body?.avatar_url || req.body?.avatarUrl, 2000)
+          : null,
+        normalizeText(req.body?.output_format || req.body?.outputFormat, 20),
+        isDefaultProvided ? isDefault : null,
+        typeof req.body?.is_hidden === "boolean" ? req.body.is_hidden : typeof req.body?.isHidden === "boolean" ? req.body.isHidden : null
+      ]
+    );
+    if (!result.rows[0]) return res.status(404).json({ detail: "Mentor not found." });
+    res.json({ mentor: result.rows[0] });
+  } catch (error) {
+    if (error?.code === "23505") {
+      return res.status(409).json({ detail: "A mentor with that agent key already exists." });
+    }
+    next(error);
+  }
+});
+
+router.delete("/admin/startup/mentors/:id", requireAuth, async (req, res, next) => {
+  try {
+    await requireAdmin(req);
+    const id = normalizeInteger(req.params.id, null);
+    const result = await pool.query("DELETE FROM startup_mentors WHERE id = $1 RETURNING id", [id]);
+    if (!result.rows[0]) return res.status(404).json({ detail: "Mentor not found." });
+    res.json({ message: "Mentor deleted.", id: result.rows[0].id });
   } catch (error) {
     next(error);
   }
@@ -813,13 +1201,16 @@ router.post("/admin/startup/stage-documents", requireAuth, async (req, res, next
     const documentType = STAGE_DOCUMENT_TYPES.includes(req.body?.document_type) ? req.body.document_type : "reference";
     const sourceType = STAGE_DOCUMENT_SOURCE_TYPES.includes(req.body?.source_type) ? req.body.source_type : "manual";
     const sourceUrl = normalizeText(req.body?.source_url || req.body?.sourceUrl, 2000);
-    const contentText = normalizeText(req.body?.content_text || req.body?.contentText, 40000);
+    let contentText = normalizeText(req.body?.content_text || req.body?.contentText, 40000);
 
     if (sourceType === "url" && !sourceUrl) {
       return res.status(400).json({ detail: "Source URL is required for a URL document." });
     }
     if (sourceType === "manual" && !contentText) {
       return res.status(400).json({ detail: "Content text is required for a manual document." });
+    }
+    if (sourceType === "url") {
+      contentText = (await extractTextFromUrl(sourceUrl)) || contentText;
     }
 
     const phaseIdRow = await pool.query("SELECT phase_id FROM journey_stages WHERE id = $1 LIMIT 1", [stageId]);
@@ -848,7 +1239,9 @@ router.post("/admin/startup/stage-documents", requireAuth, async (req, res, next
         req.auth.userId
       ]
     );
-    res.status(201).json({ document: result.rows[0] });
+    const document = result.rows[0];
+    await indexStageDocument(document.id, contentText);
+    res.status(201).json({ document });
   } catch (error) {
     next(error);
   }
@@ -885,20 +1278,23 @@ router.post(
 
       const documentType = STAGE_DOCUMENT_TYPES.includes(parsed.fields?.document_type) ? parsed.fields.document_type : "reference";
       const publicId = `stage_doc_${crypto.randomBytes(8).toString("hex")}`;
-      const uploaded = await uploadToS3({
-        buffer: file.buffer,
-        filename: `${publicId}${safeExt(file.filename)}`,
-        folder: "internlabs/startup/stage-documents",
-        contentType: file.contentType,
-        publicId
-      });
+      const [uploaded, extractedText] = await Promise.all([
+        uploadToS3({
+          buffer: file.buffer,
+          filename: `${publicId}${safeExt(file.filename)}`,
+          folder: "internlabs/startup/stage-documents",
+          contentType: file.contentType,
+          publicId
+        }),
+        extractTextFromFile({ buffer: file.buffer, filename: file.filename, contentType: file.contentType })
+      ]);
 
       const result = await pool.query(
         `INSERT INTO stage_documents (
           phase_id, stage_id, title, document_type, source_type, storage_url,
-          storage_public_id, original_filename, tags, language, is_active, created_by
+          storage_public_id, original_filename, content_text, tags, language, is_active, created_by
         )
-        VALUES ($1, $2, $3, $4, 'upload', $5, $6, $7, $8, COALESCE(NULLIF($9, ''), 'english'), COALESCE($10, TRUE), $11)
+        VALUES ($1, $2, $3, $4, 'upload', $5, $6, $7, $8, $9, COALESCE(NULLIF($10, ''), 'english'), COALESCE($11, TRUE), $12)
         RETURNING *`,
         [
           phaseIdRow.rows[0].phase_id,
@@ -908,13 +1304,16 @@ router.post(
           uploaded.url,
           uploaded.public_id,
           normalizeText(file.filename, 255),
+          extractedText,
           normalizeList(parsed.fields?.tags),
           normalizeText(parsed.fields?.language, 20),
           parseBoolField(parsed.fields?.is_active),
           req.auth.userId
         ]
       );
-      res.status(201).json({ document: result.rows[0] });
+      const document = result.rows[0];
+      await indexStageDocument(document.id, extractedText);
+      res.status(201).json({ document });
     } catch (error) {
       next(error);
     }
@@ -965,8 +1364,12 @@ router.put("/admin/startup/stage-documents/:id", requireAuth, async (req, res, n
         typeof req.body?.is_active === "boolean" ? req.body.is_active : null
       ]
     );
-    if (!result.rows[0]) return res.status(404).json({ detail: "Document not found." });
-    res.json({ document: result.rows[0] });
+    const document = result.rows[0];
+    if (!document) return res.status(404).json({ detail: "Document not found." });
+    if (req.body?.content_text !== undefined) {
+      await indexStageDocument(document.id, document.content_text);
+    }
+    res.json({ document });
   } catch (error) {
     next(error);
   }
@@ -1013,13 +1416,16 @@ router.post("/admin/startup/global-sources", requireAuth, async (req, res, next)
 
     const sourceType = KNOWLEDGE_SOURCE_TYPES.includes(req.body?.source_type) ? req.body.source_type : "manual";
     const sourceUrl = normalizeText(req.body?.source_url || req.body?.sourceUrl, 2000);
-    const contentText = normalizeText(req.body?.content_text || req.body?.contentText, 40000);
+    let contentText = normalizeText(req.body?.content_text || req.body?.contentText, 40000);
 
     if (sourceType === "url" && !sourceUrl) {
       return res.status(400).json({ detail: "Source URL is required for a URL source." });
     }
     if (sourceType === "manual" && !contentText) {
       return res.status(400).json({ detail: "Content text is required for a manual source." });
+    }
+    if (sourceType === "url") {
+      contentText = (await extractTextFromUrl(sourceUrl)) || contentText;
     }
 
     const result = await pool.query(
@@ -1037,7 +1443,9 @@ router.post("/admin/startup/global-sources", requireAuth, async (req, res, next)
         typeof req.body?.is_active === "boolean" ? req.body.is_active : undefined
       ]
     );
-    res.status(201).json({ source: result.rows[0] });
+    const source = result.rows[0];
+    await indexKnowledgeSource(source.id, contentText);
+    res.status(201).json({ source });
   } catch (error) {
     next(error);
   }
@@ -1068,30 +1476,36 @@ router.post(
       if (!file?.buffer?.length) return res.status(400).json({ detail: "A file is required." });
 
       const publicId = `global_source_${crypto.randomBytes(8).toString("hex")}`;
-      const uploaded = await uploadToS3({
-        buffer: file.buffer,
-        filename: `${publicId}${safeExt(file.filename)}`,
-        folder: "internlabs/startup/global-sources",
-        contentType: file.contentType,
-        publicId
-      });
+      const [uploaded, extractedText] = await Promise.all([
+        uploadToS3({
+          buffer: file.buffer,
+          filename: `${publicId}${safeExt(file.filename)}`,
+          folder: "internlabs/startup/global-sources",
+          contentType: file.contentType,
+          publicId
+        }),
+        extractTextFromFile({ buffer: file.buffer, filename: file.filename, contentType: file.contentType })
+      ]);
 
       const result = await pool.query(
         `INSERT INTO knowledge_sources (
-          source_scope, source_type, title, storage_url, storage_public_id, original_filename, tags, is_active
+          source_scope, source_type, title, storage_url, storage_public_id, original_filename, content_text, tags, is_active
         )
-        VALUES ('global', 'upload', $1, $2, $3, $4, $5, COALESCE($6, TRUE))
+        VALUES ('global', 'upload', $1, $2, $3, $4, $5, $6, COALESCE($7, TRUE))
         RETURNING *`,
         [
           title,
           uploaded.url,
           uploaded.public_id,
           normalizeText(file.filename, 255),
+          extractedText,
           normalizeList(parsed.fields?.tags),
           parseBoolField(parsed.fields?.is_active)
         ]
       );
-      res.status(201).json({ source: result.rows[0] });
+      const source = result.rows[0];
+      await indexKnowledgeSource(source.id, extractedText);
+      res.status(201).json({ source });
     } catch (error) {
       next(error);
     }
@@ -1125,8 +1539,12 @@ router.put("/admin/startup/global-sources/:id", requireAuth, async (req, res, ne
         typeof req.body?.is_active === "boolean" ? req.body.is_active : null
       ]
     );
-    if (!result.rows[0]) return res.status(404).json({ detail: "Global source not found." });
-    res.json({ source: result.rows[0] });
+    const source = result.rows[0];
+    if (!source) return res.status(404).json({ detail: "Global source not found." });
+    if (req.body?.content_text !== undefined) {
+      await indexKnowledgeSource(source.id, source.content_text);
+    }
+    res.json({ source });
   } catch (error) {
     next(error);
   }

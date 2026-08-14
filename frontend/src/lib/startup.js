@@ -104,3 +104,23 @@ export async function uploadAdminGlobalSource(formData) {
   const { data } = await adminApi.post("/startup/global-sources/upload", formData);
   return data;
 }
+
+export async function listAdminStartupMentors() {
+  const { data } = await adminApi.get("/startup/mentors");
+  return data;
+}
+
+export async function createAdminStartupMentor(payload) {
+  const { data } = await adminApi.post("/startup/mentors", payload);
+  return data;
+}
+
+export async function updateAdminStartupMentor(mentorId, payload) {
+  const { data } = await adminApi.put(`/startup/mentors/${mentorId}`, payload);
+  return data;
+}
+
+export async function deleteAdminStartupMentor(mentorId) {
+  const { data } = await adminApi.delete(`/startup/mentors/${mentorId}`);
+  return data;
+}
