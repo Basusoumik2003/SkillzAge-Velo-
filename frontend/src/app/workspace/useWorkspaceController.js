@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { disclaimerAccepted } from "@/components/DisclaimerModal";
 import { getMentorChatHistory, reviewStageDocument, saveLocalChatMessage, sendMentorMessage } from "@/lib/chat";
-
+import { getStartupWorkspace } from "@/lib/startup";
 import {
   completeDashboardTask,
   getCatalogProject,
@@ -760,6 +760,56 @@ export default function useWorkspaceController() {
     };
   }, []);
 
+
+  useEffect(() => {
+  if (!ready) return;
+
+  let cancelled = false;
+
+  getStartupWorkspace()
+  .then((data) => {
+    if (cancelled || !Array.isArray(data?.journey) || !data.journey.length) return;
+
+    const startupProject = {
+      title: "Startup Journey",
+      steps: data.journey.map((phase) => ({
+        title: phase.phase_name || phase.phase_key || "Phase",
+        phase_context: phase.phase_description || phase.phase_objective || "",
+        agent_key: "pm_agent",
+        stages: (phase.stages || []).map((stage) => ({
+          title: stage.stage_name || stage.stage_key || "Stage",
+          stage_context: stage.stage_context || "",
+          objective: stage.stage_objective || "",
+          deliverable: stage.expected_outcome || "",
+          readiness_criteria: stage.readiness_criteria || "",
+          recommended_actions: stage.recommended_actions || "",
+          document_required: false,
+          github_integration_required: false,
+          agent_key: "pm_agent"
+        }))
+      }))
+    };
+
+    setCatalogProject(startupProject);
+    setProjectName("Startup Journey");
+    setMethodState({
+      current_step: 1,
+      tasks: startupProject.steps.map((step) => step.title),
+      completed_tasks: []
+    });
+    setSelectedPoint(1);
+    setSelectedStageByStep({});
+    setTaskViewByStep({ 1: "about" });
+  })
+  .catch((error) => {
+    console.error("Unable to load startup journey:", error);
+  });
+
+  return () => {
+    cancelled = true;
+  };
+}, [ready]);
+
   const methodDisplayStep = useMemo(() => {
     return clampStep(methodState.current_step, methodTotalSteps || 1);
   }, [methodState.current_step, methodTotalSteps]);
@@ -1250,6 +1300,7 @@ export default function useWorkspaceController() {
     if (!ready || !projectName || workspaceMode === "demo") return;
     let active = true;
     const loadCatalog = async () => {
+       if (projectName === "Startup Journey") return;
       setLoading(true);
       setWorkspaceError("");
       try {

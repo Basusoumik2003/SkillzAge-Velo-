@@ -88,7 +88,10 @@ export default function useStartupWorkspaceController() {
     getStartupWorkspace()
       .then((data) => {
         if (cancelled) return;
-        setWorkspace(data);
+        setWorkspace({
+  ...data,
+  profile: data?.profile || EMPTY_PROFILE
+});
         setActivePhaseId(data?.active_phase?.id || data?.journey?.[0]?.id || null);
         setActiveStageId(data?.active_stage?.id || data?.journey?.[0]?.stages?.[0]?.id || null);
         setMessages(mapMessages(data?.context?.recent_messages || []));
