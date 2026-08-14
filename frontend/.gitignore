@@ -23,4 +23,5 @@ yarn-debug.log*
 
 # OS
 .DS_Store
+frontend/.next/
 Thumbs.db
