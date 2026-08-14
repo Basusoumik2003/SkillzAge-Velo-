@@ -26,3 +26,5 @@ yarn-debug.log*
 Thumbs.db
 .next/
 frontend/.next/
+frontend/.next/
+Thumbs.db
