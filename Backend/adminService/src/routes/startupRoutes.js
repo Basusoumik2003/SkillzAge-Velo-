@@ -12,6 +12,46 @@ import { parseMultipartFormData } from "../utils/multipart.js";
 
 const router = express.Router();
 
+let startupMentorSchemaReady = null;
+
+/**
+ * Lazily creates the startup_mentors table (and the journey_phases/journey_stages
+ * agent_key columns) if the 2026-08-16_01_startup_mentors_and_agent_routing.sql
+ * migration hasn't been applied yet. Mirrors the ensureMentorSchema() pattern in
+ * adminRoutes.js for project_mentors, so this route never 500s with a missing relation.
+ */
+function ensureStartupMentorSchema() {
+  if (!startupMentorSchemaReady) {
+    startupMentorSchemaReady = pool.query(`
+      CREATE TABLE IF NOT EXISTS startup_mentors (
+        id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        agent_key VARCHAR(80) UNIQUE NOT NULL,
+        mentor_name VARCHAR(120) NOT NULL,
+        role TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        backstory TEXT NOT NULL,
+        avatar_url TEXT NOT NULL DEFAULT '',
+        output_format VARCHAR(20) NOT NULL DEFAULT 'markdown',
+        is_default BOOLEAN NOT NULL DEFAULT FALSE,
+        is_hidden BOOLEAN NOT NULL DEFAULT FALSE,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT chk_startup_mentors_output_format CHECK (output_format IN ('markdown', 'plain_text', 'json'))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_startup_mentors_single_default
+        ON startup_mentors(is_default)
+        WHERE is_default = TRUE;
+      ALTER TABLE journey_stages ADD COLUMN IF NOT EXISTS agent_key VARCHAR(80) NOT NULL DEFAULT '';
+      ALTER TABLE journey_phases ADD COLUMN IF NOT EXISTS default_agent_key VARCHAR(80) NOT NULL DEFAULT '';
+    `).catch((error) => {
+      startupMentorSchemaReady = null;
+      throw error;
+    });
+  }
+  return startupMentorSchemaReady;
+}
+
 async function indexChunks({ table, idColumn, recordId, text }) {
   const chunks = chunkText(text);
   await pool.query(`DELETE FROM ${table} WHERE ${idColumn} = $1`, [recordId]);
@@ -88,6 +128,15 @@ function normalizeInteger(value, fallback = null) {
   return Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
 }
 
+/**
+ * created_by is a nullable FK to users(id). When BYPASS_ADMIN_AUTH is on,
+ * req.auth.userId is a hardcoded placeholder that doesn't exist in the users
+ * table, which would violate the FK — so fall back to NULL in that case.
+ */
+function resolveCreatedBy(req) {
+  return req.auth?.bypassed ? null : req.auth.userId;
+}
+
 async function requireAdmin(req) {
   
   if (process.env.BYPASS_ADMIN_AUTH === "true") {
@@ -141,6 +190,7 @@ async function fetchStageRows() {
  * the chat flow.
  */
 async function resolveMentorForStage({ phase, stage }) {
+  await ensureStartupMentorSchema();
   const candidateKeys = [stage?.agent_key, phase?.default_agent_key].map((k) => String(k || "").trim()).filter(Boolean);
 
   if (candidateKeys.length) {
@@ -889,7 +939,7 @@ router.post("/admin/startup/phases", requireAuth, async (req, res, next) => {
         normalizeText(req.body?.intended_audience || req.body?.intendedAudience, 4000),
         normalizeText(req.body?.default_agent_key || req.body?.defaultAgentKey, 80),
         typeof req.body?.is_active === "boolean" ? req.body.is_active : undefined,
-        req.auth.userId
+        resolveCreatedBy(req)
       ]
     );
     res.status(201).json({ phase: result.rows[0] });
@@ -1046,6 +1096,7 @@ router.delete("/admin/startup/stages/:id", requireAuth, async (req, res, next) =
 router.get("/admin/startup/mentors", requireAuth, async (req, res, next) => {
   try {
     await requireAdmin(req);
+    await ensureStartupMentorSchema();
     const { rows } = await pool.query("SELECT * FROM startup_mentors ORDER BY is_default DESC, mentor_name ASC");
     res.json({ mentors: rows });
   } catch (error) {
@@ -1056,6 +1107,7 @@ router.get("/admin/startup/mentors", requireAuth, async (req, res, next) => {
 router.post("/admin/startup/mentors", requireAuth, async (req, res, next) => {
   try {
     await requireAdmin(req);
+    await ensureStartupMentorSchema();
     const agentKey = normalizeText(req.body?.agent_key || req.body?.agentKey, 80);
     const mentorName = normalizeText(req.body?.mentor_name || req.body?.mentorName, 120);
     const role = normalizeText(req.body?.role, 4000);
@@ -1101,6 +1153,7 @@ router.post("/admin/startup/mentors", requireAuth, async (req, res, next) => {
 router.put("/admin/startup/mentors/:id", requireAuth, async (req, res, next) => {
   try {
     await requireAdmin(req);
+    await ensureStartupMentorSchema();
     const id = normalizeInteger(req.params.id, null);
     const isDefaultProvided = req.body?.is_default !== undefined || req.body?.isDefault !== undefined;
     const isDefault = req.body?.is_default === true || req.body?.isDefault === true;
@@ -1150,6 +1203,7 @@ router.put("/admin/startup/mentors/:id", requireAuth, async (req, res, next) => 
 router.delete("/admin/startup/mentors/:id", requireAuth, async (req, res, next) => {
   try {
     await requireAdmin(req);
+    await ensureStartupMentorSchema();
     const id = normalizeInteger(req.params.id, null);
     const result = await pool.query("DELETE FROM startup_mentors WHERE id = $1 RETURNING id", [id]);
     if (!result.rows[0]) return res.status(404).json({ detail: "Mentor not found." });
