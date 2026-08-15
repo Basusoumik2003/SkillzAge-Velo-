@@ -592,6 +592,115 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
   }
 });
 
+router.get("/admin/startup/journeys", requireAuth, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM journeys ORDER BY journey_name ASC, id ASC"
+    );
+
+    res.json({ journeys: result.rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/admin/startup/journeys", requireAuth, async (req, res, next) => {
+  try {
+    const {
+      journey_key,
+      journey_name,
+      journey_description = "",
+      journey_objective = "",
+      intended_audience = "",
+      is_active = true
+    } = req.body;
+
+    if (!journey_key?.trim() || !journey_name?.trim()) {
+      return res.status(400).json({
+        detail: "Journey key and journey name are required."
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO journeys (
+        journey_key,
+        journey_name,
+        journey_description,
+        journey_objective,
+        intended_audience,
+        is_active,
+        created_by
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *`,
+      [
+        journey_key.trim(),
+        journey_name.trim(),
+        journey_description.trim(),
+        journey_objective.trim(),
+        intended_audience.trim(),
+        Boolean(is_active),
+        req.auth.userId
+      ]
+    );
+
+    res.status(201).json({ journey: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/admin/startup/journeys/:id", requireAuth, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `UPDATE journeys
+       SET journey_key = COALESCE(NULLIF($2, ''), journey_key),
+           journey_name = COALESCE(NULLIF($3, ''), journey_name),
+           journey_description = COALESCE($4, journey_description),
+           journey_objective = COALESCE($5, journey_objective),
+           intended_audience = COALESCE($6, intended_audience),
+           is_active = COALESCE($7, is_active),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        Number(req.params.id),
+        String(req.body.journey_key || "").trim(),
+        String(req.body.journey_name || "").trim(),
+        String(req.body.journey_description || "").trim(),
+        String(req.body.journey_objective || "").trim(),
+        String(req.body.intended_audience || "").trim(),
+        req.body.is_active === undefined ? null : Boolean(req.body.is_active)
+      ]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ detail: "Journey not found." });
+    }
+
+    res.json({ journey: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/admin/startup/journeys/:id", requireAuth, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      "DELETE FROM journeys WHERE id = $1 RETURNING id",
+      [Number(req.params.id)]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ detail: "Journey not found." });
+    }
+
+    res.json({ id: result.rows[0].id });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/admin/startup/journey", requireAuth, async (req, res, next) => {
   try {
     await requireAdmin(req);
