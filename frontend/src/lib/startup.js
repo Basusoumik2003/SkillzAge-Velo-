@@ -1,5 +1,9 @@
 import { adminApi, startupApi } from "@/lib/api";
 
+export async function listAdminMentors() {
+  const { data } = await adminApi.get("/mentors");
+  return data;
+}
 export async function getStartupWorkspace() {
   const { data } = await startupApi.get("/workspace");
   return data;
@@ -9,7 +13,25 @@ export async function getStartupProfile() {
   const { data } = await startupApi.get("/profile");
   return data;
 }
+export async function listAdminJourneys() {
+  const { data } = await adminApi.get("/startup/journeys");
+  return data;
+}
 
+export async function createAdminJourney(payload) {
+  const { data } = await adminApi.post("/startup/journeys", payload);
+  return data;
+}
+
+export async function updateAdminJourney(id, payload) {
+  const { data } = await adminApi.put(`/startup/journeys/${id}`, payload);
+  return data;
+}
+
+export async function deleteAdminJourney(id) {
+  const { data } = await adminApi.delete(`/startup/journeys/${id}`);
+  return data;
+}
 export async function saveStartupProfile(payload) {
   const { data } = await startupApi.post("/profile", payload);
   return data;

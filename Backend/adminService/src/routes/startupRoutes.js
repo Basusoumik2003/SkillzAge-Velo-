@@ -173,8 +173,8 @@ async function fetchPhaseRows() {
 
 async function fetchStageRows() {
   const { rows } = await pool.query(
-    `SELECT id, phase_id, stage_key, stage_order, stage_name, stage_context, stage_objective,
-            expected_outcome, readiness_criteria, recommended_actions, agent_key, is_active,
+    `SELECT id, phase_id, mentor_id, stage_key, stage_order, stage_name, stage_context, stage_objective,
+            expected_outcome, readiness_criteria, recommended_actions, is_active,
             created_by, created_at, updated_at
      FROM journey_stages
      ORDER BY phase_id ASC, stage_order ASC, id ASC`
@@ -904,6 +904,115 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
   }
 });
 
+router.get("/admin/startup/journeys", requireAuth, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM journeys ORDER BY journey_name ASC, id ASC"
+    );
+
+    res.json({ journeys: result.rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/admin/startup/journeys", requireAuth, async (req, res, next) => {
+  try {
+    const {
+      journey_key,
+      journey_name,
+      journey_description = "",
+      journey_objective = "",
+      intended_audience = "",
+      is_active = true
+    } = req.body;
+
+    if (!journey_key?.trim() || !journey_name?.trim()) {
+      return res.status(400).json({
+        detail: "Journey key and journey name are required."
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO journeys (
+        journey_key,
+        journey_name,
+        journey_description,
+        journey_objective,
+        intended_audience,
+        is_active,
+        created_by
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *`,
+      [
+        journey_key.trim(),
+        journey_name.trim(),
+        journey_description.trim(),
+        journey_objective.trim(),
+        intended_audience.trim(),
+        Boolean(is_active),
+        req.auth.userId
+      ]
+    );
+
+    res.status(201).json({ journey: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/admin/startup/journeys/:id", requireAuth, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `UPDATE journeys
+       SET journey_key = COALESCE(NULLIF($2, ''), journey_key),
+           journey_name = COALESCE(NULLIF($3, ''), journey_name),
+           journey_description = COALESCE($4, journey_description),
+           journey_objective = COALESCE($5, journey_objective),
+           intended_audience = COALESCE($6, intended_audience),
+           is_active = COALESCE($7, is_active),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        Number(req.params.id),
+        String(req.body.journey_key || "").trim(),
+        String(req.body.journey_name || "").trim(),
+        String(req.body.journey_description || "").trim(),
+        String(req.body.journey_objective || "").trim(),
+        String(req.body.intended_audience || "").trim(),
+        req.body.is_active === undefined ? null : Boolean(req.body.is_active)
+      ]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ detail: "Journey not found." });
+    }
+
+    res.json({ journey: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/admin/startup/journeys/:id", requireAuth, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      "DELETE FROM journeys WHERE id = $1 RETURNING id",
+      [Number(req.params.id)]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ detail: "Journey not found." });
+    }
+
+    res.json({ id: result.rows[0].id });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/admin/startup/journey", requireAuth, async (req, res, next) => {
   try {
     await requireAdmin(req);
@@ -1008,29 +1117,29 @@ router.post("/admin/startup/stages", requireAuth, async (req, res, next) => {
       return res.status(400).json({ detail: "Phase id, stage key, and stage name are required." });
     }
 
-    const result = await pool.query(
-      `INSERT INTO journey_stages (
-        phase_id, stage_key, stage_order, stage_name, stage_context,
-        stage_objective, expected_outcome, readiness_criteria, recommended_actions,
-        agent_key, is_active, created_by
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, TRUE), $12)
-      RETURNING *`,
-      [
-        phaseId,
-        stageKey,
-        normalizeInteger(req.body?.stage_order || req.body?.stageOrder, 0),
-        stageName,
-        normalizeText(req.body?.stage_context || req.body?.stageContext, 12000),
-        normalizeText(req.body?.stage_objective || req.body?.stageObjective, 12000),
-        normalizeText(req.body?.expected_outcome || req.body?.expectedOutcome, 12000),
-        normalizeText(req.body?.readiness_criteria || req.body?.readinessCriteria, 12000),
-        normalizeText(req.body?.recommended_actions || req.body?.recommendedActions, 12000),
-        normalizeText(req.body?.agent_key || req.body?.agentKey, 80),
-        typeof req.body?.is_active === "boolean" ? req.body.is_active : undefined,
-        req.auth.userId
-      ]
-    );
+   const result = await pool.query(
+  `INSERT INTO journey_stages (
+    phase_id, mentor_id, stage_key, stage_order, stage_name, stage_context,
+    stage_objective, expected_outcome, readiness_criteria, recommended_actions,
+    is_active, created_by
+  )
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, TRUE), $12)
+  RETURNING *`,
+  [
+    phaseId,
+    normalizeInteger(req.body?.mentor_id || req.body?.mentorId, null),
+    stageKey,
+    normalizeInteger(req.body?.stage_order || req.body?.stageOrder, 0),
+    stageName,
+    normalizeText(req.body?.stage_context || req.body?.stageContext, 12000),
+    normalizeText(req.body?.stage_objective || req.body?.stageObjective, 12000),
+    normalizeText(req.body?.expected_outcome || req.body?.expectedOutcome, 12000),
+    normalizeText(req.body?.readiness_criteria || req.body?.readinessCriteria, 12000),
+    normalizeText(req.body?.recommended_actions || req.body?.recommendedActions, 12000),
+    typeof req.body?.is_active === "boolean" ? req.body.is_active : undefined,
+    req.auth.userId
+  ]
+);
     res.status(201).json({ stage: result.rows[0] });
   } catch (error) {
     next(error);
@@ -1042,38 +1151,36 @@ router.put("/admin/startup/stages/:id", requireAuth, async (req, res, next) => {
     await requireAdmin(req);
     const id = normalizeInteger(req.params.id, null);
     const result = await pool.query(
-      `UPDATE journey_stages
-       SET phase_id = COALESCE($2, phase_id),
-           stage_key = COALESCE(NULLIF($3, ''), stage_key),
-           stage_order = COALESCE($4, stage_order),
-           stage_name = COALESCE(NULLIF($5, ''), stage_name),
-           stage_context = COALESCE($6, stage_context),
-           stage_objective = COALESCE($7, stage_objective),
-           expected_outcome = COALESCE($8, expected_outcome),
-           readiness_criteria = COALESCE($9, readiness_criteria),
-           recommended_actions = COALESCE($10, recommended_actions),
-           agent_key = COALESCE($11, agent_key),
-           is_active = COALESCE($12, is_active),
-           updated_at = NOW()
-       WHERE id = $1
-       RETURNING *`,
-      [
-        id,
-        normalizeInteger(req.body?.phase_id || req.body?.phaseId, null),
-        normalizeText(req.body?.stage_key || req.body?.stageKey, 80),
-        normalizeInteger(req.body?.stage_order || req.body?.stageOrder, null),
-        normalizeText(req.body?.stage_name || req.body?.stageName, 160),
-        normalizeText(req.body?.stage_context || req.body?.stageContext, 12000),
-        normalizeText(req.body?.stage_objective || req.body?.stageObjective, 12000),
-        normalizeText(req.body?.expected_outcome || req.body?.expectedOutcome, 12000),
-        normalizeText(req.body?.readiness_criteria || req.body?.readinessCriteria, 12000),
-        normalizeText(req.body?.recommended_actions || req.body?.recommendedActions, 12000),
-        req.body?.agent_key !== undefined || req.body?.agentKey !== undefined
-          ? normalizeText(req.body?.agent_key || req.body?.agentKey, 80)
-          : null,
-        typeof req.body?.is_active === "boolean" ? req.body.is_active : null
-      ]
-    );
+  `UPDATE journey_stages
+   SET phase_id = COALESCE($2, phase_id),
+       mentor_id = $3,
+       stage_key = COALESCE(NULLIF($4, ''), stage_key),
+       stage_order = COALESCE($5, stage_order),
+       stage_name = COALESCE(NULLIF($6, ''), stage_name),
+       stage_context = COALESCE($7, stage_context),
+       stage_objective = COALESCE($8, stage_objective),
+       expected_outcome = COALESCE($9, expected_outcome),
+       readiness_criteria = COALESCE($10, readiness_criteria),
+       recommended_actions = COALESCE($11, recommended_actions),
+       is_active = COALESCE($12, is_active),
+       updated_at = NOW()
+   WHERE id = $1
+   RETURNING *`,
+  [
+    id,
+    normalizeInteger(req.body?.phase_id || req.body?.phaseId, null),
+    normalizeInteger(req.body?.mentor_id || req.body?.mentorId, null),
+    normalizeText(req.body?.stage_key || req.body?.stageKey, 80),
+    normalizeInteger(req.body?.stage_order || req.body?.stageOrder, null),
+    normalizeText(req.body?.stage_name || req.body?.stageName, 160),
+    normalizeText(req.body?.stage_context || req.body?.stageContext, 12000),
+    normalizeText(req.body?.stage_objective || req.body?.stageObjective, 12000),
+    normalizeText(req.body?.expected_outcome || req.body?.expectedOutcome, 12000),
+    normalizeText(req.body?.readiness_criteria || req.body?.readinessCriteria, 12000),
+    normalizeText(req.body?.recommended_actions || req.body?.recommendedActions, 12000),
+    typeof req.body?.is_active === "boolean" ? req.body.is_active : null
+  ]
+);
     if (!result.rows[0]) return res.status(404).json({ detail: "Stage not found." });
     res.json({ stage: result.rows[0] });
   } catch (error) {

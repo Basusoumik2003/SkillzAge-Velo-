@@ -74,7 +74,12 @@ export default function WorkspaceLayout(controller) {
           <ResizeHandle />
 
           <Panel id="sources" order={3} minSize={14} defaultSize={18} maxSize={28} collapsible collapsedSize={0} className="hidden xl:block">
-            <SourcesPanel selectedPointData={controller.selectedPointData} activeStageData={controller.activeStageData} />
+           <SourcesPanel
+  selectedPointData={controller.selectedPointData}
+  activeStageData={controller.activeStageData}
+  catalogProject={controller.catalogProject}
+  projectName={controller.projectName}
+/>
           </Panel>
 
           <ResizeHandle />
