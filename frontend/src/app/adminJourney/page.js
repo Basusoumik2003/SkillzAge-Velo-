@@ -19,7 +19,7 @@ import {
 
 import useRequireAuth from "@/lib/useRequireAuth";
 import MentorManager from "@/components/adminDashboard/MentorManager";
-
+import { listAdminMentors } from "@/lib/startup";
 import {
   createAdminGlobalSource,
   createAdminJourney,
@@ -69,6 +69,7 @@ const EMPTY_JOURNEY = {
 const EMPTY_STAGE = {
   id: null,
   phase_id: "",
+  mentor_id: "",
   stage_key: "",
   stage_order: 1,
   stage_name: "",
@@ -79,7 +80,6 @@ const EMPTY_STAGE = {
   recommended_actions: "",
   is_active: true
 };
-
 const EMPTY_DOCUMENT = {
   id: null,
   stage_id: "",
@@ -206,7 +206,7 @@ export default function AdminJourneyPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
+const [mentors, setMentors] = useState([]);
   const [journey, setJourney] = useState([]);
   const [journeys, setJourneys] = useState([]);
   const [journeyForm, setJourneyForm] = useState(EMPTY_JOURNEY);
@@ -248,7 +248,18 @@ export default function AdminJourneyPage() {
     () => stages.filter((stage) => stage.is_active).length,
     [stages]
   );
-
+const loadMentors = async () => {
+  try {
+    const data = await listAdminMentors();
+    setMentors(Array.isArray(data?.mentors) ? data.mentors : []);
+  } catch (err) {
+    setError(
+      err?.response?.data?.detail ||
+        err?.message ||
+        "Unable to load mentors."
+    );
+  }
+};
   const loadJourney = async () => {
     setLoading(true);
     setError("");
@@ -315,12 +326,12 @@ export default function AdminJourneyPage() {
   };
 
   useEffect(() => {
-    loadJourney();
-    loadJourneys();
-    loadDocuments();
-    loadGlobalSources();
-  }, []);
-
+  loadJourney();
+  loadJourneys();
+  loadMentors();
+  loadDocuments();
+  loadGlobalSources();
+}, []);
   const resetPhase = () => {
     setPhaseForm(EMPTY_PHASE);
   };
@@ -424,7 +435,10 @@ export default function AdminJourneyPage() {
       expected_outcome: stageForm.expected_outcome,
       readiness_criteria: stageForm.readiness_criteria,
       recommended_actions: stageForm.recommended_actions,
-      is_active: Boolean(stageForm.is_active)
+      is_active: Boolean(stageForm.is_active),
+      mentor_id: stageForm.mentor_id
+  ? Number(stageForm.mentor_id)
+  : null,
     };
 
     if (stageForm.id) {
@@ -503,7 +517,10 @@ const editStage = (stage) => {
   setStageForm({
     ...EMPTY_STAGE,
     ...stage,
-    phase_id: String(stage.phase_id || "")
+    phase_id: String(stage.phase_id || ""),
+    mentor_id: stage.mentor_id
+      ? String(stage.mentor_id)
+      : ""
   });
 };
 
@@ -1194,173 +1211,301 @@ const removeStage = async (stage) => {
     )}
   </div>
 </Panel>
-          <Panel title="Stages" description="Ordered steps within a phase, shown to students one at a time." icon={ListChecks}>
-            <form onSubmit={saveStage} className="grid gap-4">
-              <label className="grid gap-2">
-                <FieldLabel>Phase</FieldLabel>
-                <select
-                  value={stageForm.phase_id}
-                  onChange={(e) => setStageForm({ ...stageForm, phase_id: e.target.value })}
-                  className={inputClass}
-                >
-                  <option value="">Select phase</option>
-                  {phases.map((phase) => (
-                    <option key={phase.id} value={phase.id}>
-                      {phase.phase_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="grid gap-2">
-                  <FieldLabel>Stage Key</FieldLabel>
-                  <input
-                    value={stageForm.stage_key}
-                    onChange={(e) => setStageForm({ ...stageForm, stage_key: e.target.value })}
-                    placeholder="define_problem"
-                    className={inputClass}
-                  />
-                </label>
-                <label className="grid gap-2">
-                  <FieldLabel>Order</FieldLabel>
-                  <input
-                    type="number"
-                    value={stageForm.stage_order}
-                    onChange={(e) => setStageForm({ ...stageForm, stage_order: e.target.value })}
-                    className={inputClass}
-                  />
-                </label>
+         <Panel
+  title="Stages"
+  description="Ordered steps within a phase, shown to students one at a time."
+  icon={ListChecks}
+>
+  <form onSubmit={saveStage} className="grid gap-4">
+    <label className="grid gap-2">
+      <FieldLabel>Phase</FieldLabel>
+
+      <select
+        value={stageForm.phase_id}
+        onChange={(event) =>
+          setStageForm({
+            ...stageForm,
+            phase_id: event.target.value
+          })
+        }
+        className={inputClass}
+      >
+        <option value="">Select phase</option>
+
+        {phases.map((phase) => (
+          <option key={phase.id} value={phase.id}>
+            {phase.phase_name}
+          </option>
+        ))}
+      </select>
+    </label>
+
+    <label className="grid gap-2">
+      <FieldLabel>Responsible Mentor</FieldLabel>
+
+      <select
+        value={stageForm.mentor_id}
+        onChange={(event) =>
+          setStageForm({
+            ...stageForm,
+            mentor_id: event.target.value
+          })
+        }
+        className={inputClass}
+      >
+        <option value="">Select mentor</option>
+
+        {mentors.map((mentor) => (
+          <option key={mentor.id} value={mentor.id}>
+            {mentor.mentor_name || mentor.name}
+            {mentor.role ? ` — ${mentor.role}` : ""}
+          </option>
+        ))}
+      </select>
+    </label>
+
+    <div className="grid gap-4 md:grid-cols-2">
+      <label className="grid gap-2">
+        <FieldLabel>Stage Key</FieldLabel>
+
+        <input
+          value={stageForm.stage_key}
+          onChange={(event) =>
+            setStageForm({
+              ...stageForm,
+              stage_key: event.target.value
+            })
+          }
+          placeholder="define_problem"
+          className={inputClass}
+        />
+      </label>
+
+      <label className="grid gap-2">
+        <FieldLabel>Order</FieldLabel>
+
+        <input
+          type="number"
+          min="1"
+          value={stageForm.stage_order}
+          onChange={(event) =>
+            setStageForm({
+              ...stageForm,
+              stage_order: event.target.value
+            })
+          }
+          className={inputClass}
+        />
+      </label>
+    </div>
+
+    <label className="grid gap-2">
+      <FieldLabel>Stage Name</FieldLabel>
+
+      <input
+        value={stageForm.stage_name}
+        onChange={(event) =>
+          setStageForm({
+            ...stageForm,
+            stage_name: event.target.value
+          })
+        }
+        placeholder="e.g. Define the problem"
+        className={inputClass}
+      />
+    </label>
+
+    <label className="grid gap-2">
+      <FieldLabel>Context</FieldLabel>
+
+      <textarea
+        value={stageForm.stage_context}
+        onChange={(event) =>
+          setStageForm({
+            ...stageForm,
+            stage_context: event.target.value
+          })
+        }
+        rows={3}
+        className={inputClass}
+        placeholder="Background the AI mentor should know..."
+      />
+    </label>
+
+    <label className="grid gap-2">
+      <FieldLabel>Objective</FieldLabel>
+
+      <textarea
+        value={stageForm.stage_objective}
+        onChange={(event) =>
+          setStageForm({
+            ...stageForm,
+            stage_objective: event.target.value
+          })
+        }
+        rows={2}
+        className={inputClass}
+      />
+    </label>
+
+    <label className="grid gap-2">
+      <FieldLabel>Expected Outcome</FieldLabel>
+
+      <textarea
+        value={stageForm.expected_outcome}
+        onChange={(event) =>
+          setStageForm({
+            ...stageForm,
+            expected_outcome: event.target.value
+          })
+        }
+        rows={2}
+        className={inputClass}
+      />
+    </label>
+
+    <label className="grid gap-2">
+      <FieldLabel>Readiness Criteria</FieldLabel>
+
+      <textarea
+        value={stageForm.readiness_criteria}
+        onChange={(event) =>
+          setStageForm({
+            ...stageForm,
+            readiness_criteria: event.target.value
+          })
+        }
+        rows={2}
+        className={inputClass}
+      />
+    </label>
+
+    <label className="grid gap-2">
+      <FieldLabel>Recommended Actions</FieldLabel>
+
+      <textarea
+        value={stageForm.recommended_actions}
+        onChange={(event) =>
+          setStageForm({
+            ...stageForm,
+            recommended_actions: event.target.value
+          })
+        }
+        rows={2}
+        className={inputClass}
+      />
+    </label>
+
+    <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-700">
+      <input
+        type="checkbox"
+        checked={Boolean(stageForm.is_active)}
+        onChange={(event) =>
+          setStageForm({
+            ...stageForm,
+            is_active: event.target.checked
+          })
+        }
+        className="h-4 w-4"
+      />
+
+      Active
+    </label>
+
+    <div className="flex flex-wrap gap-3">
+      <button
+        type="submit"
+        disabled={saving}
+        className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white disabled:opacity-60"
+      >
+        {saving ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Plus className="h-4 w-4" />
+        )}
+
+        {stageForm.id ? "Update Stage" : "Create Stage"}
+      </button>
+
+      <button
+        type="button"
+        onClick={resetStage}
+        className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700"
+      >
+        Reset
+      </button>
+    </div>
+  </form>
+
+  <div className="mt-6 space-y-3 border-t border-slate-100 pt-6">
+    {loading ? (
+      <p className="text-sm font-semibold text-slate-500">
+        Loading stages...
+      </p>
+    ) : stages.length ? (
+      stages.map((stage) => {
+        const mentor = mentors.find(
+          (item) => Number(item.id) === Number(stage.mentor_id)
+        );
+
+        return (
+          <div
+            key={stage.id}
+            className="rounded-[1.5rem] border border-slate-100 bg-slate-50 p-5"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-base font-black text-slate-950">
+                  {stage.stage_name}
+                </p>
+
+                <p className="mt-1 text-xs font-semibold text-slate-500">
+                  {stage.phase_name} · {stage.stage_key} · order{" "}
+                  {stage.stage_order}
+                </p>
+
+                <p className="mt-1 text-xs font-semibold text-orange-600">
+                  Mentor:{" "}
+                  {mentor?.mentor_name ||
+                    mentor?.name ||
+                    "No mentor assigned"}
+                </p>
+
+                {stage.stage_context || stage.expected_outcome ? (
+                  <p className="mt-2 text-sm font-medium text-slate-600">
+                    {stage.stage_context || stage.expected_outcome}
+                  </p>
+                ) : null}
               </div>
-              <label className="grid gap-2">
-                <FieldLabel>Stage Name</FieldLabel>
-                <input
-                  value={stageForm.stage_name}
-                  onChange={(e) => setStageForm({ ...stageForm, stage_name: e.target.value })}
-                  placeholder="e.g. Define the problem"
-                  className={inputClass}
-                />
-              </label>
-              <label className="grid gap-2">
-                <FieldLabel>Context</FieldLabel>
-                <textarea
-                  value={stageForm.stage_context}
-                  onChange={(e) => setStageForm({ ...stageForm, stage_context: e.target.value })}
-                  rows={3}
-                  className={inputClass}
-                  placeholder="Background the AI mentor should know..."
-                />
-              </label>
-              <label className="grid gap-2">
-                <FieldLabel>Objective</FieldLabel>
-                <textarea
-                  value={stageForm.stage_objective}
-                  onChange={(e) => setStageForm({ ...stageForm, stage_objective: e.target.value })}
-                  rows={2}
-                  className={inputClass}
-                />
-              </label>
-              <label className="grid gap-2">
-                <FieldLabel>Expected Outcome</FieldLabel>
-                <textarea
-                  value={stageForm.expected_outcome}
-                  onChange={(e) => setStageForm({ ...stageForm, expected_outcome: e.target.value })}
-                  rows={2}
-                  className={inputClass}
-                />
-              </label>
-              <label className="grid gap-2">
-                <FieldLabel>Readiness Criteria</FieldLabel>
-                <textarea
-                  value={stageForm.readiness_criteria}
-                  onChange={(e) => setStageForm({ ...stageForm, readiness_criteria: e.target.value })}
-                  rows={2}
-                  className={inputClass}
-                  placeholder="What must be true to move on..."
-                />
-              </label>
-              <label className="grid gap-2">
-                <FieldLabel>Recommended Actions</FieldLabel>
-                <textarea
-                  value={stageForm.recommended_actions}
-                  onChange={(e) => setStageForm({ ...stageForm, recommended_actions: e.target.value })}
-                  rows={2}
-                  className={inputClass}
-                />
-              </label>
-              <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={Boolean(stageForm.is_active)}
-                  onChange={(e) => setStageForm({ ...stageForm, is_active: e.target.checked })}
-                  className="h-4 w-4"
-                />
-                Active
-              </label>
-              <div className="flex flex-wrap gap-3">
-                <button
-                  disabled={saving}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white shadow-[0_14px_30px_-16px_rgba(15,23,42,0.8)] transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  {stageForm.id ? "Update Stage" : "Create Stage"}
-                </button>
+
+              <div className="flex shrink-0 gap-1.5">
                 <button
                   type="button"
-                  onClick={resetStage}
-                  className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-700 shadow-sm transition hover:bg-slate-50"
+                  onClick={() => editStage(stage)}
+                  className="rounded-full border border-slate-200 bg-white p-2"
                 >
-                  Reset
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => removeStage(stage)}
+                  className="rounded-full border border-rose-200 bg-white p-2 text-rose-600"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
-            </form>
-
-            <div className="mt-6 space-y-3 border-t border-slate-100 pt-6">
-              {loading ? (
-                <p className="text-sm font-semibold text-slate-500">Loading stages...</p>
-              ) : stages.length ? (
-                stages.map((stage) => (
-                  <div key={stage.id} className="rounded-[1.5rem] border border-slate-100 bg-slate-50 p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-base font-black text-slate-950">{stage.stage_name}</p>
-                          {!stage.is_active ? (
-                            <span className="rounded-full bg-slate-200 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-slate-600">
-                              Inactive
-                            </span>
-                          ) : null}
-                        </div>
-                        <p className="mt-1 text-xs font-semibold text-slate-500">
-                          {stage.phase_name} &middot; {stage.stage_key} &middot; order {stage.stage_order}
-                        </p>
-                        {stage.stage_context || stage.expected_outcome ? (
-                          <p className="mt-2 text-sm font-medium text-slate-600">{stage.stage_context || stage.expected_outcome}</p>
-                        ) : null}
-                      </div>
-                      <div className="flex shrink-0 gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => editStage(stage)}
-                          className="rounded-full border border-slate-200 bg-white p-2 text-slate-700 transition hover:bg-slate-100"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removeStage(stage)}
-                          className="rounded-full border border-rose-200 bg-white p-2 text-rose-600 transition hover:bg-rose-50"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <p className="text-sm font-semibold text-slate-500">No stages yet — pick a phase above and add the first stage.</p>
-              )}
             </div>
-          </Panel>
+          </div>
+        );
+      })
+    ) : (
+      <p className="text-sm font-semibold text-slate-500">
+        No stages yet.
+      </p>
+    )}
+  </div>
+</Panel>
         </div>
 
         <Panel title="Stage Documents" description="Reference material the AI mentor pulls into an answer for a specific stage." icon={FileText}>

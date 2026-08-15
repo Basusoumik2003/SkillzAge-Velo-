@@ -1,5 +1,9 @@
 import { adminApi, startupApi } from "@/lib/api";
 
+export async function listAdminMentors() {
+  const { data } = await adminApi.get("/mentors");
+  return data;
+}
 export async function getStartupWorkspace() {
   const { data } = await startupApi.get("/workspace");
   return data;
