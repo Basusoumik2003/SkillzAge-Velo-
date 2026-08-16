@@ -1,5 +1,5 @@
 const { Pool } = require('pg');
-require('dotenv').config();
+require('./env');
 
 // Use DATABASE_URL if provided, otherwise fall back to individual PG* env vars.
 const pool = new Pool(
