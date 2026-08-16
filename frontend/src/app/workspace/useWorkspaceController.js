@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { disclaimerAccepted } from "@/components/DisclaimerModal";
 import { getMentorChatHistory, reviewStageDocument, saveLocalChatMessage, sendMentorMessage } from "@/lib/chat";
-import { getStartupWorkspace } from "@/lib/startup";
+import { getStartupMentors, getStartupWorkspace } from "@/lib/startup";
 import {
   completeDashboardTask,
   getCatalogProject,
@@ -31,7 +31,8 @@ const AGENT_LABELS = {
   customer_experience_agent: "Customer Experience Specialist",
   qa_agent: "Frontend Engineering Lead",
   devops_agent: "Evaluation Reviewer",
-  mentor_agent: "Evaluation Reviewer"
+  mentor_agent: "Evaluation Reviewer",
+  startup_mentor: "Startup Mentor"
 };
 
 const STAGE_PROMPT_INITIAL_DELAY_MS = 1000;
@@ -190,6 +191,7 @@ function labelForAgent(agentKey) {
 
 function backendKeyForStageAgent(agentKey) {
   const key = String(agentKey || "").trim();
+  if (key.startsWith("startup_")) return "startup_mentor";
   if (key === "qa_agent" || key === "devops_agent" || key === "mentor_agent") return "qa";
   if (key === "architect_agent" || key === "team_lead_agent") return "architect";
   if (key === "dev_agent" || key === "engineer_agent" || key === "marketing_lead_agent" || key === "customer_experience_agent") return "tech_lead";
@@ -732,10 +734,13 @@ export default function useWorkspaceController() {
   useEffect(() => {
     let cancelled = false;
     async function loadMentors() {
+      if (!projectName) return;
       try {
-        const data = await getDashboardMentors();
-        const loaded = (data.mentors || [])
-          .filter((mentor) => mentor?.name)
+        const isStartupJourney = String(projectName).trim().toLowerCase() === "startup journey";
+        const data = isStartupJourney ? await getStartupMentors() : await getDashboardMentors();
+        const mentorList = Array.isArray(data?.mentors) ? data.mentors : Array.isArray(data?.startup_mentors) ? data.startup_mentors : [];
+        const loaded = mentorList
+          .filter((mentor) => mentor?.name || mentor?.mentor_name)
           .map((mentor, index) => ({
             id: mentor.id,
             agent_key: mentor.agent_key,
@@ -746,10 +751,10 @@ export default function useWorkspaceController() {
             backstory: mentor.backstory || mentor.mentor_json?.backstory || "",
             rules: mentor.backstory || mentor.mentor_json?.rules || "",
             boundaries: "",
-            backend_key: String(mentor.backend_key || mentor.mentor_json?.backend_key || "").trim(),
+            backend_key: String(mentor.backend_key || mentor.mentor_json?.backend_key || mentor.agent_key || "").trim(),
             accent: WORKSPACE_AGENT_ACCENTS[index % WORKSPACE_AGENT_ACCENTS.length] || "from-slate-700 to-slate-950"
           }));
-        if (!cancelled && loaded.length) setWorkspaceAgents(loaded);
+        if (!cancelled) setWorkspaceAgents(loaded);
       } catch {
         if (!cancelled) setWorkspaceAgents([]);
       }
@@ -758,7 +763,7 @@ export default function useWorkspaceController() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [projectName]);
 
 
   useEffect(() => {
@@ -770,12 +775,42 @@ export default function useWorkspaceController() {
   .then((data) => {
     if (cancelled || !Array.isArray(data?.journey) || !data.journey.length) return;
 
+    const startupMentorsByKey = new Map();
+    const startupMentorsById = new Map();
+    data.journey.forEach((phase, phaseIndex) => {
+      (phase.stages || []).forEach((stage, stageIndex) => {
+        const mentorId = Number(stage?.mentor_id);
+        const mentorAgentKey = String(stage?.mentor_agent_key || stage?.agent_key || phase?.default_agent_key || "startup_mentor").trim() || "startup_mentor";
+        const mapKey = Number.isFinite(mentorId) && mentorId > 0 ? `id:${mentorId}` : `key:${mentorAgentKey.toLowerCase()}`;
+        if (startupMentorsByKey.has(mapKey)) return;
+        const mentorRecord = {
+          id: Number.isFinite(mentorId) && mentorId > 0 ? mentorId : `${mentorAgentKey}:${phaseIndex}:${stageIndex}`,
+          agent_key: mentorAgentKey,
+          name: stage?.mentor_name || mentorAgentKey.replaceAll("_", " ") || "Startup Mentor",
+          role: stage?.mentor_role || stage?.mentor_name || "Startup Mentor",
+          avatar_url: stage?.mentor_avatar_url || "",
+          goal: stage?.mentor_goal || "",
+          backstory: stage?.mentor_backstory || "",
+          rules: stage?.mentor_backstory || "",
+          boundaries: "",
+          backend_key: mentorAgentKey.startsWith("startup_") ? "startup_mentor" : mentorAgentKey,
+          accent: WORKSPACE_AGENT_ACCENTS[(phaseIndex + stageIndex) % WORKSPACE_AGENT_ACCENTS.length] || "from-slate-700 to-slate-950"
+        };
+        startupMentorsByKey.set(mapKey, mentorRecord);
+        if (Number.isFinite(mentorId) && mentorId > 0) {
+          startupMentorsById.set(mentorId, mentorRecord);
+        }
+      });
+    });
+    const startupMentors = [...startupMentorsByKey.values()];
+    if (startupMentors.length) setWorkspaceAgents(startupMentors);
+
     const startupProject = {
       title: "Startup Journey",
       steps: data.journey.map((phase) => ({
         title: phase.phase_name || phase.phase_key || "Phase",
         phase_context: phase.phase_description || phase.phase_objective || "",
-        agent_key: "pm_agent",
+        agent_key: String(phase.default_agent_key || phase.agent_key || "startup_mentor").trim() || "startup_mentor",
         stages: (phase.stages || []).map((stage) => ({
           title: stage.stage_name || stage.stage_key || "Stage",
           stage_context: stage.stage_context || "",
@@ -785,7 +820,9 @@ export default function useWorkspaceController() {
           recommended_actions: stage.recommended_actions || "",
           document_required: false,
           github_integration_required: false,
-          agent_key: "pm_agent"
+          mentor_id: stage.mentor_id || null,
+          mentor_name: stage.mentor_name || "",
+          agent_key: String(stage.mentor_agent_key || stage.agent_key || phase.default_agent_key || "startup_mentor").trim() || "startup_mentor"
         }))
       }))
     };

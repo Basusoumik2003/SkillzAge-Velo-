@@ -35,6 +35,23 @@ class ProjectProgress(Base):
     user = relationship("User", back_populates="projects")
 
 
+class Company(Base):
+    """Admin-managed company/tenant catalog (sql/schema.sql, section 8)."""
+
+    __tablename__ = "companies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(160), nullable=False)
+    slug = Column(String(180), unique=True, nullable=False)
+    industry = Column(String(120), nullable=False, default="")
+    description = Column(Text, default="")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    projects = relationship("Project", back_populates="company")
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -55,6 +72,8 @@ class Project(Base):
     solution_document = Column(Text, default="")
     solution_document_url = Column(Text, default="")
     steps_json = Column(JSON, default=list)
+
+    company = relationship("Company", back_populates="projects")
 
 
 class Mentor(Base):

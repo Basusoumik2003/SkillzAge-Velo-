@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const DEFAULT_MODEL = process.env.OPENAI_MODEL || process.env.OPENAI_STARTUP_MODEL || "gpt-5.6-luna";
 const LIGHT_MODEL = process.env.OPENAI_LIGHT_MODEL || DEFAULT_MODEL;
 
 /**

@@ -9,6 +9,11 @@ export async function getStartupWorkspace() {
   return data;
 }
 
+export async function getStartupMentors() {
+  const { data } = await adminApi.get("/startup/mentors");
+  return data;
+}
+
 export async function getStartupProfile() {
   const { data } = await startupApi.get("/profile");
   return data;

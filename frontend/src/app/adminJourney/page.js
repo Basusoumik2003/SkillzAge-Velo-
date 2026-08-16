@@ -19,7 +19,6 @@ import {
 
 import useRequireAuth from "@/lib/useRequireAuth";
 import MentorManager from "@/components/adminDashboard/MentorManager";
-import { listAdminMentors } from "@/lib/startup";
 import {
   createAdminGlobalSource,
   createAdminJourney,
@@ -251,18 +250,7 @@ const [mentors, setMentors] = useState([]);
     () => stages.filter((stage) => stage.is_active).length,
     [stages]
   );
-const loadMentors = async () => {
-  try {
-    const data = await listAdminMentors();
-    setMentors(Array.isArray(data?.mentors) ? data.mentors : []);
-  } catch (err) {
-    setError(
-      err?.response?.data?.detail ||
-        err?.message ||
-        "Unable to load mentors."
-    );
-  }
-};
+
   const loadJourney = async () => {
     setLoading(true);
     setError("");
@@ -526,12 +514,15 @@ const editPhase = (phase) => {
 };
 
 const editStage = (stage) => {
+  const mentor = mentors.find(
+    (item) => String(item.agent_key || "").trim() === String(stage.mentor_agent_key || "").trim()
+  );
   setStageForm({
     ...EMPTY_STAGE,
     ...stage,
     phase_id: String(stage.phase_id || ""),
-    mentor_id: stage.mentor_id
-      ? String(stage.mentor_id)
+    mentor_id: mentor?.id
+      ? String(mentor.id)
       : ""
   });
 };
@@ -1456,9 +1447,12 @@ const removeStage = async (stage) => {
       </p>
     ) : stages.length ? (
       stages.map((stage) => {
-        const mentor = mentors.find(
-          (item) => Number(item.id) === Number(stage.mentor_id)
-        );
+        const mentor =
+          mentors.find(
+            (item) =>
+              String(item.agent_key || "").trim() === String(stage.mentor_agent_key || "").trim()
+          ) ||
+          mentors.find((item) => Number(item.id) === Number(stage.mentor_id));
 
         return (
           <div
@@ -1920,7 +1914,7 @@ const removeStage = async (stage) => {
           </div>
         </Panel>
 
-        <MentorManager />
+        <MentorManager onMentorsChanged={loadMentors} />
       </div>
     </main>
   );

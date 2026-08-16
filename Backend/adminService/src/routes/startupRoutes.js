@@ -13,6 +13,7 @@ import { parseMultipartFormData } from "../utils/multipart.js";
 const router = express.Router();
 
 let startupMentorSchemaReady = null;
+let projectMentorSchemaReady = null;
 
 /**
  * Lazily creates the startup_mentors table (and the journey_phases/journey_stages
@@ -44,12 +45,95 @@ function ensureStartupMentorSchema() {
         WHERE is_default = TRUE;
       ALTER TABLE journey_stages ADD COLUMN IF NOT EXISTS agent_key VARCHAR(80) NOT NULL DEFAULT '';
       ALTER TABLE journey_phases ADD COLUMN IF NOT EXISTS default_agent_key VARCHAR(80) NOT NULL DEFAULT '';
+      UPDATE journey_stages js
+      SET mentor_id = sm.id
+      FROM project_mentors pm
+      INNER JOIN startup_mentors sm ON sm.agent_key = pm.agent_key
+      WHERE js.mentor_id = pm.id;
+      UPDATE journey_stages
+      SET mentor_id = NULL
+      WHERE mentor_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM startup_mentors sm
+          WHERE sm.id = journey_stages.mentor_id
+        );
+      ALTER TABLE IF EXISTS journey_stages DROP CONSTRAINT IF EXISTS fk_journey_stages_mentor;
+      ALTER TABLE IF EXISTS journey_stages
+        ADD CONSTRAINT fk_journey_stages_mentor
+        FOREIGN KEY (mentor_id)
+        REFERENCES startup_mentors(id)
+        ON DELETE SET NULL;
     `).catch((error) => {
       startupMentorSchemaReady = null;
       throw error;
     });
   }
   return startupMentorSchemaReady;
+}
+
+function ensureProjectMentorSchema() {
+  if (!projectMentorSchemaReady) {
+    projectMentorSchemaReady = pool.query(`
+      CREATE TABLE IF NOT EXISTS project_mentors (
+        id SERIAL PRIMARY KEY,
+        agent_key VARCHAR(50) UNIQUE NOT NULL,
+        mentor_name VARCHAR(100) NOT NULL,
+        role TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        backstory TEXT NOT NULL,
+        avatar_url TEXT NOT NULL DEFAULT '',
+        avatar_public_id TEXT NOT NULL DEFAULT '',
+        is_hidden BOOLEAN NOT NULL DEFAULT FALSE,
+        output_format VARCHAR(20) NOT NULL DEFAULT 'markdown',
+        CONSTRAINT chk_project_mentors_output_format
+          CHECK (output_format IN ('markdown', 'plain_text', 'json'))
+      );
+      CREATE INDEX IF NOT EXISTS ix_project_mentors_is_hidden ON project_mentors(is_hidden);
+    `).catch((error) => {
+      projectMentorSchemaReady = null;
+      throw error;
+    });
+  }
+  return projectMentorSchemaReady;
+}
+
+async function syncProjectMentorFromStartupMentor(mentor) {
+  if (!mentor) return;
+  await ensureProjectMentorSchema();
+  await pool.query(
+    `INSERT INTO project_mentors (
+      agent_key, mentor_name, role, goal, backstory, avatar_url, avatar_public_id, is_hidden, output_format
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    ON CONFLICT (agent_key) DO UPDATE SET
+      mentor_name = EXCLUDED.mentor_name,
+      role = EXCLUDED.role,
+      goal = EXCLUDED.goal,
+      backstory = EXCLUDED.backstory,
+      avatar_url = EXCLUDED.avatar_url,
+      avatar_public_id = EXCLUDED.avatar_public_id,
+      is_hidden = EXCLUDED.is_hidden,
+      output_format = EXCLUDED.output_format`,
+    [
+      mentor.agent_key,
+      mentor.mentor_name,
+      mentor.role,
+      mentor.goal,
+      mentor.backstory,
+      mentor.avatar_url || "",
+      mentor.avatar_public_id || "",
+      Boolean(mentor.is_hidden),
+      mentor.output_format || "markdown"
+    ]
+  );
+}
+
+async function deleteProjectMentorByAgentKey(agentKey) {
+  const key = String(agentKey || "").trim();
+  if (!key) return;
+  await ensureProjectMentorSchema();
+  await pool.query("DELETE FROM project_mentors WHERE agent_key = $1", [key]);
 }
 
 async function indexChunks({ table, idColumn, recordId, text }) {
@@ -173,11 +257,14 @@ async function fetchPhaseRows() {
 
 async function fetchStageRows() {
   const { rows } = await pool.query(
-    `SELECT id, phase_id, mentor_id, stage_key, stage_order, stage_name, stage_context, stage_objective,
-            expected_outcome, readiness_criteria, recommended_actions, is_active,
-            created_by, created_at, updated_at
-     FROM journey_stages
-     ORDER BY phase_id ASC, stage_order ASC, id ASC`
+    `SELECT js.id, js.phase_id, js.mentor_id, js.stage_key, js.stage_order, js.stage_name, js.stage_context, js.stage_objective,
+            js.expected_outcome, js.readiness_criteria, js.recommended_actions, js.is_active,
+            sm.agent_key AS mentor_agent_key,
+            sm.mentor_name AS mentor_name,
+            js.created_by, js.created_at, js.updated_at
+     FROM journey_stages js
+     LEFT JOIN startup_mentors sm ON sm.id = js.mentor_id
+     ORDER BY js.phase_id ASC, js.stage_order ASC, js.id ASC`
   );
   return rows;
 }
@@ -1110,6 +1197,7 @@ router.delete("/admin/startup/phases/:id", requireAuth, async (req, res, next) =
 router.post("/admin/startup/stages", requireAuth, async (req, res, next) => {
   try {
     await requireAdmin(req);
+    await ensureStartupMentorSchema();
     const phaseId = normalizeInteger(req.body?.phase_id || req.body?.phaseId, null);
     const stageKey = normalizeText(req.body?.stage_key || req.body?.stageKey, 80);
     const stageName = normalizeText(req.body?.stage_name || req.body?.stageName, 160);
@@ -1149,6 +1237,7 @@ router.post("/admin/startup/stages", requireAuth, async (req, res, next) => {
 router.put("/admin/startup/stages/:id", requireAuth, async (req, res, next) => {
   try {
     await requireAdmin(req);
+    await ensureStartupMentorSchema();
     const id = normalizeInteger(req.params.id, null);
     const result = await pool.query(
   `UPDATE journey_stages
@@ -1205,6 +1294,7 @@ router.get("/admin/startup/mentors", requireAuth, async (req, res, next) => {
     await requireAdmin(req);
     await ensureStartupMentorSchema();
     const { rows } = await pool.query("SELECT * FROM startup_mentors ORDER BY is_default DESC, mentor_name ASC");
+    await Promise.all(rows.map((mentor) => syncProjectMentorFromStartupMentor(mentor)));
     res.json({ mentors: rows });
   } catch (error) {
     next(error);
@@ -1248,6 +1338,7 @@ router.post("/admin/startup/mentors", requireAuth, async (req, res, next) => {
         req.auth.userId
       ]
     );
+    await syncProjectMentorFromStartupMentor(result.rows[0]);
     res.status(201).json({ mentor: result.rows[0] });
   } catch (error) {
     if (error?.code === "23505") {
@@ -1262,6 +1353,7 @@ router.put("/admin/startup/mentors/:id", requireAuth, async (req, res, next) => 
     await requireAdmin(req);
     await ensureStartupMentorSchema();
     const id = normalizeInteger(req.params.id, null);
+    const existingLookup = await pool.query("SELECT agent_key FROM startup_mentors WHERE id = $1 LIMIT 1", [id]);
     const isDefaultProvided = req.body?.is_default !== undefined || req.body?.isDefault !== undefined;
     const isDefault = req.body?.is_default === true || req.body?.isDefault === true;
     if (isDefaultProvided && isDefault) {
@@ -1298,6 +1390,12 @@ router.put("/admin/startup/mentors/:id", requireAuth, async (req, res, next) => 
       ]
     );
     if (!result.rows[0]) return res.status(404).json({ detail: "Mentor not found." });
+    const existingAgentKey = String(existingLookup.rows[0]?.agent_key || "").trim();
+    const nextAgentKey = String(result.rows[0]?.agent_key || "").trim();
+    if (existingAgentKey && existingAgentKey !== nextAgentKey) {
+      await deleteProjectMentorByAgentKey(existingAgentKey);
+    }
+    await syncProjectMentorFromStartupMentor(result.rows[0]);
     res.json({ mentor: result.rows[0] });
   } catch (error) {
     if (error?.code === "23505") {
@@ -1312,8 +1410,10 @@ router.delete("/admin/startup/mentors/:id", requireAuth, async (req, res, next) 
     await requireAdmin(req);
     await ensureStartupMentorSchema();
     const id = normalizeInteger(req.params.id, null);
+    const mentorLookup = await pool.query("SELECT agent_key FROM startup_mentors WHERE id = $1 LIMIT 1", [id]);
     const result = await pool.query("DELETE FROM startup_mentors WHERE id = $1 RETURNING id", [id]);
     if (!result.rows[0]) return res.status(404).json({ detail: "Mentor not found." });
+    await deleteProjectMentorByAgentKey(mentorLookup.rows[0]?.agent_key);
     res.json({ message: "Mentor deleted.", id: result.rows[0].id });
   } catch (error) {
     next(error);

@@ -17,7 +17,7 @@ const INITIAL_FORM = {
 };
 const FORMATS = ["markdown", "plain_text", "json"];
 
-export default function MentorManager() {
+export default function MentorManager({ onMentorsChanged } = {}) {
   const [mentors, setMentors] = useState([]);
   const [form, setForm] = useState(INITIAL_FORM);
   const [editingId, setEditingId] = useState(null);
@@ -30,7 +30,10 @@ export default function MentorManager() {
   const load = async () => {
     try { const data = await listAdminStartupMentors(); setMentors(Array.isArray(data?.mentors) ? data.mentors : Array.isArray(data) ? data : []); }
     catch (err) { setError(err?.response?.data?.detail || err?.message || "Failed to load mentors."); }
-    finally { setLoaded(true); }
+    finally {
+      setLoaded(true);
+      await onMentorsChanged?.();
+    }
   };
   useEffect(() => { load(); }, []);
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
@@ -51,10 +54,17 @@ export default function MentorManager() {
       is_hidden: form.isHidden
     };
     setSaving(true);
-    try { const result = editingId ? await updateAdminStartupMentor(editingId, payload) : await createAdminStartupMentor(payload); const mentor = result?.mentor; setMentors((current) => editingId ? current.map((item) => item.id === editingId ? { ...item, ...mentor } : item) : [...current, mentor]); setMessage(`Mentor "${form.mentorName.trim()}" ${editingId ? "updated" : "created"}.`); reset(); }
+    try {
+      const result = editingId ? await updateAdminStartupMentor(editingId, payload) : await createAdminStartupMentor(payload);
+      const mentor = result?.mentor;
+      setMentors((current) => editingId ? current.map((item) => item.id === editingId ? { ...item, ...mentor } : item) : [...current, mentor]);
+      setMessage(`Mentor "${form.mentorName.trim()}" ${editingId ? "updated" : "created"}.`);
+      reset();
+      await onMentorsChanged?.();
+    }
     catch (err) { setError(err?.response?.data?.detail || err?.message || "Failed to save mentor."); } finally { setSaving(false); }
   };
-  const remove = async (mentor) => { setDeletingId(mentor.id); setError(""); try { await deleteAdminStartupMentor(mentor.id); setMentors((current) => current.filter((item) => item.id !== mentor.id)); if (editingId === mentor.id) reset(); } catch (err) { setError(err?.response?.data?.detail || err?.message || "Failed to delete mentor."); } finally { setDeletingId(null); } };
+  const remove = async (mentor) => { setDeletingId(mentor.id); setError(""); try { await deleteAdminStartupMentor(mentor.id); setMentors((current) => current.filter((item) => item.id !== mentor.id)); if (editingId === mentor.id) reset(); await onMentorsChanged?.(); } catch (err) { setError(err?.response?.data?.detail || err?.message || "Failed to delete mentor."); } finally { setDeletingId(null); } };
 
   return <section className="mt-8 rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm" id="mentor-form-card">
     <div className="mb-6 flex items-center gap-3"><Users className="h-6 w-6 text-orange-500" /><div><h2 className="text-2xl font-black text-slate-950">Mentors</h2><p className="text-sm font-semibold text-slate-500">AI mentor personas for the Startup Journey. Assign an agent key to a phase or stage to route questions to a specific mentor.</p></div></div>

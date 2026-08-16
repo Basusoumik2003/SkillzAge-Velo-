@@ -3,7 +3,8 @@ require("dotenv").config();
 const express = require("express");
 
 const app = express();
-const port = process.env.PORT || 8008;
+const preferredPort = Number(process.env.PORT) || 8008;
+const fallbackPort = Number(process.env.SEARCH_SERVICE_PORT) || 8008;
 
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "http://localhost:3000");
@@ -100,6 +101,21 @@ app.post("/search", async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Search service running on port ${port}`);
-});
+function listen(port, triedFallback = false) {
+  const server = app.listen(port, () => {
+    console.log(`Search service running on port ${port}`);
+  });
+
+  server.on("error", (error) => {
+    if (error?.code === "EADDRINUSE" && !triedFallback && port !== fallbackPort) {
+      console.warn(`Port ${port} is busy, retrying on ${fallbackPort}...`);
+      listen(fallbackPort, true);
+      return;
+    }
+
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+listen(preferredPort);

@@ -1203,6 +1203,141 @@ def _resolve_admin_mentor(db: Session, mentor_id: int | None, preferred_agent: s
     return _serialize_mentor(mentor)
 
 
+def _agent_key_for_startup_mentor(mentor: dict) -> str:
+    configured = str(mentor.get("agent_key") or "").strip().lower()
+    if configured in {"qa", "qa_agent"}:
+        return "qa"
+    if configured in {"architect", "architect_agent", "team_lead_agent"}:
+        return "architect"
+    if configured in {"tech_lead", "engineer", "engineer_agent", "dev_agent", "marketing_lead_agent", "customer_experience_agent"}:
+        return "tech_lead"
+    if configured in {"pm", "pm_agent", "product", "business_analyst_agent"}:
+        return "pm"
+
+    text_blob = " ".join(
+        str(part or "").lower()
+        for part in (
+            mentor.get("mentor_name"),
+            mentor.get("role"),
+            mentor.get("goal"),
+            mentor.get("backstory"),
+        )
+    )
+    if any(word in text_blob for word in ("test", "qa", "quality")):
+        return "qa"
+    if any(word in text_blob for word in ("design", "architect", "system")):
+        return "architect"
+    if any(word in text_blob for word in ("build", "code", "engineer", "launch", "tech")):
+        return "tech_lead"
+    return "pm"
+
+
+def _serialize_startup_mentor(mentor: dict | None) -> dict:
+    if not mentor:
+        return {}
+    return {
+        "id": mentor.get("id"),
+        "agent_key": str(mentor.get("agent_key") or "").strip(),
+        "name": str(mentor.get("mentor_name") or mentor.get("name") or "Startup Mentor").strip(),
+        "role": str(mentor.get("role") or "").strip(),
+        "goal": str(mentor.get("goal") or "").strip(),
+        "backstory": str(mentor.get("backstory") or "").strip(),
+        "backend_key": _agent_key_for_startup_mentor(mentor),
+        "rules": str(mentor.get("backstory") or "").strip(),
+        "boundaries": "",
+        "tone": "",
+        "output_format": str(mentor.get("output_format") or "markdown").strip(),
+        "speciality": str(mentor.get("goal") or "").strip(),
+        "avatar_url": str(mentor.get("avatar_url") or "").strip(),
+    }
+
+
+def _is_startup_project(project_name: str) -> bool:
+    normalized = str(project_name or "").strip().lower()
+    return normalized.startswith("startup")
+
+
+def _fetch_startup_mentor_row(db: Session, query: str, params: dict) -> dict | None:
+    row = db.execute(text(query), params).mappings().first()
+    return dict(row or {}) if row and row.get("id") else None
+
+
+def _resolve_startup_mentor(
+    db: Session,
+    mentor_id: int | None,
+    preferred_agent: str | None,
+    *,
+    stage_key: str | None,
+    step_number: int | None,
+    stage_index: int | None,
+) -> dict:
+    mentor = None
+    if mentor_id:
+        mentor = _fetch_startup_mentor_row(
+            db,
+            "SELECT * FROM startup_mentors WHERE id = :mentor_id AND is_hidden = FALSE LIMIT 1",
+            {"mentor_id": mentor_id},
+        )
+
+    normalized_stage_key = str(stage_key or "").strip()
+    if not mentor and normalized_stage_key:
+        mentor = _fetch_startup_mentor_row(
+            db,
+            """
+            SELECT sm.*
+            FROM journey_stages js
+            LEFT JOIN startup_mentors sm ON sm.id = js.mentor_id
+            WHERE LOWER(TRIM(js.stage_key)) = LOWER(TRIM(:stage_key))
+            LIMIT 1
+            """,
+            {"stage_key": normalized_stage_key},
+        )
+
+    if not mentor and step_number is not None and stage_index is not None:
+        mentor = _fetch_startup_mentor_row(
+            db,
+            """
+            SELECT sm.*
+            FROM journey_phases jp
+            INNER JOIN journey_stages js ON js.phase_id = jp.id
+            LEFT JOIN startup_mentors sm ON sm.id = js.mentor_id
+            WHERE jp.phase_order = :phase_order
+              AND js.stage_order = :stage_order
+            ORDER BY js.id ASC
+            LIMIT 1
+            """,
+            {"phase_order": step_number, "stage_order": int(stage_index) + 1},
+        )
+
+    if not mentor and preferred_agent:
+        mentor = _fetch_startup_mentor_row(
+            db,
+            """
+            SELECT * FROM startup_mentors
+            WHERE LOWER(TRIM(agent_key)) = LOWER(TRIM(:agent_key))
+              AND is_hidden = FALSE
+            LIMIT 1
+            """,
+            {"agent_key": preferred_agent},
+        )
+
+    if not mentor:
+        mentor = _fetch_startup_mentor_row(
+            db,
+            "SELECT * FROM startup_mentors WHERE is_default = TRUE LIMIT 1",
+            {},
+        )
+
+    if not mentor:
+        mentor = _fetch_startup_mentor_row(
+            db,
+            "SELECT * FROM startup_mentors WHERE is_hidden = FALSE ORDER BY is_default DESC, mentor_name ASC LIMIT 1",
+            {},
+        )
+
+    return _serialize_startup_mentor(mentor)
+
+
 def _get_stage_progress_row(
     db: Session,
     *,
@@ -1665,7 +1800,19 @@ def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = 
         raise HTTPException(status_code=404, detail="Please select a project first")
 
     intent = classify_message_intent(payload.message)
-    admin_mentor = _resolve_admin_mentor(db, payload.mentor_id, payload.preferred_agent)
+    startup_project = _is_startup_project(progress.project_name)
+    admin_mentor = (
+        _resolve_startup_mentor(
+            db,
+            payload.mentor_id,
+            payload.preferred_agent,
+            stage_key=payload.stage_key,
+            step_number=payload.step_number,
+            stage_index=payload.stage_index,
+        )
+        if startup_project
+        else _resolve_admin_mentor(db, payload.mentor_id, payload.preferred_agent)
+    )
     contextual_short_reply = _should_treat_short_reply_as_contextual_question(
         db,
         user_id=user.id,
@@ -2100,7 +2247,7 @@ def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = 
             }
 
     if active_stage.get("is_completed") and _is_more_info_request(payload.message):
-        selected_agent = admin_mentor.get("backend_key") or payload.preferred_agent or "pm"
+        selected_agent = admin_mentor.get("backend_key") or payload.preferred_agent or ("startup_mentor" if startup_project else "pm")
         mentor_reply = {
             "agent": admin_mentor.get("name") or AGENT_LABELS.get(selected_agent, "Mentor"),
             "message": _completed_stage_more_info_response(active_stage),
@@ -2114,7 +2261,10 @@ def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = 
             "response_cache_key": cache_key,
         }
     elif not local_reply and chat_metadata.get("optimization", {}).get("reply_source") != "exact_response_cache":
-        mentor_reply = route_agent(context=context, preferred_agent=admin_mentor.get("backend_key") or payload.preferred_agent)
+        mentor_reply = route_agent(
+            context=context,
+            preferred_agent=admin_mentor.get("backend_key") or payload.preferred_agent or ("startup_mentor" if startup_project else "pm"),
+        )
     if back_message and mentor_reply.get("message"):
         mentor_reply["message"] = f"{back_message}\n\n{mentor_reply['message']}"
         optimization = chat_metadata.get("optimization") or {}
@@ -2550,7 +2700,18 @@ def review_stage_document(payload: StageDocumentReviewInput, db: Session = Depen
         )
         cached_review_messages.append(_serialize_chat_message(upload_row))
 
-    review_mentor = _resolve_admin_mentor(db, payload.mentor_id, payload.preferred_agent)
+    review_mentor = (
+        _resolve_startup_mentor(
+            db,
+            payload.mentor_id,
+            payload.preferred_agent,
+            stage_key=payload.stage_key,
+            step_number=payload.step_number,
+            stage_index=payload.stage_index,
+        )
+        if _is_startup_project(progress.project_name)
+        else _resolve_admin_mentor(db, payload.mentor_id, payload.preferred_agent)
+    )
     rag_question, rag_query_metadata = _build_stage_review_rag_question(
         project_name=progress.project_name,
         stage_title=payload.stage_title or "",
