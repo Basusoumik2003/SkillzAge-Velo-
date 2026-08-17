@@ -9,10 +9,16 @@
 -- users(id) as UUID to match it. This block only bolts on the extra columns
 -- the workspace backend code reads/writes that SkillzAge's users table
 -- doesn't have yet.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS wix_member_id VARCHAR(255);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE users ALTER COLUMN gender SET DEFAULT 'other';
+ALTER TABLE users ALTER COLUMN password_hash SET DEFAULT '';
 
+CREATE UNIQUE INDEX IF NOT EXISTS ix_users_wix_member_id
+  ON users(wix_member_id)
+  WHERE wix_member_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_users_is_active ON users(is_active);
 CREATE INDEX IF NOT EXISTS ix_users_last_seen_at
   ON users(last_seen_at DESC)

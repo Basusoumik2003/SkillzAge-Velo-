@@ -14,13 +14,43 @@ const pool = new Pool(
       }
 );
 
+function logDb(step, payload) {
+  console.log(`[db:${step}]`, payload);
+}
+
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle PostgreSQL client', err);
+  console.error('[db:pool:error]', err);
   process.exit(1);
 });
 
 module.exports = {
-  query: (text, params) => pool.query(text, params),
-  getClient: () => pool.connect(),
+  query: async (text, params) => {
+    logDb('query:start', {
+      text,
+      params,
+    });
+
+    try {
+      const result = await pool.query(text, params);
+      logDb('query:success', {
+        rowCount: result.rowCount,
+      });
+      return result;
+    } catch (err) {
+      logDb('query:error', {
+        message: err.message,
+        code: err.code,
+        text,
+        params,
+      });
+      throw err;
+    }
+  },
+  getClient: async () => {
+    logDb('client:acquire:start', {});
+    const client = await pool.connect();
+    logDb('client:acquire:success', {});
+    return client;
+  },
   pool,
 };

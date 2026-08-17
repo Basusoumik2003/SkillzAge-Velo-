@@ -54,7 +54,31 @@ const loginValidators = [
     .withMessage('Email must be a valid email address')
     .normalizeEmail(),
 
-  body('password').notEmpty().withMessage('Password is required'),
+  body('password')
+    .notEmpty()
+    .withMessage('Password is required'),
 ];
 
-module.exports = { signupValidators, loginValidators };
+/*
+ * Wix → Backend sync
+ */
+const wixSyncValidators = [
+  body('email')
+    .trim()
+    .notEmpty()
+    .withMessage('Email is required')
+    .isEmail()
+    .withMessage('Email must be a valid email address')
+    .normalizeEmail(),
+
+  body('memberId')
+    .trim()
+    .notEmpty()
+    .withMessage('Wix member ID is required'),
+];
+
+module.exports = {
+  signupValidators,
+  loginValidators,
+  wixSyncValidators,
+};
