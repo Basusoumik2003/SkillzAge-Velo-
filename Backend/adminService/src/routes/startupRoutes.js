@@ -408,77 +408,138 @@ async function rerankByEmbedding({ rows, chunkTable, chunkIdColumn, questionEmbe
     .slice(0, limit);
 }
 
-async function fetchRetrievedContext({ userId, profileId, ideaId, phaseId, stageId, question }) {
+async function fetchRetrievedContext({
+  userId,
+  profileId,
+  ideaId,
+  phaseId,
+  stageId,
+  agentId,
+  question
+}) {
   const questionLike = `%${normalizeText(question, 200)}%`;
 
-  const [stageDocsCandidates, knowledgeSourcesCandidates, recentMessages, memoryRows, questionEmbedding] = await Promise.all([
-    pool.query(
-      `SELECT id, title, document_type, source_type, source_url, storage_url, original_filename, language, tags, content_text, created_at, updated_at
-       FROM stage_documents
-       WHERE is_active = TRUE
-         AND (
-           stage_id = $1
-           OR phase_id = $2
-           OR title ILIKE $3
-           OR content_text ILIKE $3
+  const [
+  stageDocsCandidates,
+  knowledgeSourcesCandidates,
+  recentMessages,
+  memoryRows,
+  questionEmbedding
+] = await Promise.all([
+  pool.query(
+    `SELECT id, title, document_type, source_type, source_url,
+            storage_url, original_filename, language, tags,
+            content_text, created_at, updated_at
+     FROM stage_documents
+     WHERE is_active = TRUE
+       AND (
+         stage_id = $1
+         OR phase_id = $2
+         OR title ILIKE $3
+         OR content_text ILIKE $3
+       )
+       AND EXISTS (
+         SELECT 1
+         FROM startup_agent_document_access access
+         WHERE access.agent_id = $4
+           AND access.document_kind = 'stage'
+           AND access.document_id = stage_documents.id
+       )
+     ORDER BY
+       CASE
+         WHEN stage_id = $1 THEN 0
+         WHEN phase_id = $2 THEN 1
+         ELSE 2
+       END,
+       updated_at DESC
+     LIMIT 20`,
+    [
+      stageId,
+      phaseId,
+      questionLike,
+      agentId
+    ]
+  ),
+
+  pool.query(
+    `SELECT id, source_scope, source_type, title, source_url,
+            storage_url, original_filename, tags, content_text,
+            metadata, created_at, updated_at
+     FROM knowledge_sources
+     WHERE is_active = TRUE
+       AND (
+         user_id = $1
+         OR idea_id = $2
+         OR stage_id = $3
+         OR phase_id = $4
+         OR title ILIKE $5
+         OR content_text ILIKE $5
+       )
+       AND (
+         source_scope <> 'global'
+         OR EXISTS (
+           SELECT 1
+           FROM startup_agent_document_access access
+           WHERE access.agent_id = $6
+             AND access.document_kind = 'global'
+             AND access.document_id = knowledge_sources.id
          )
-       ORDER BY
-         CASE WHEN stage_id = $1 THEN 0 WHEN phase_id = $2 THEN 1 ELSE 2 END,
-         updated_at DESC
-       LIMIT 20`,
-      [stageId, phaseId, questionLike]
-    ),
-    pool.query(
-      `SELECT id, source_scope, source_type, title, source_url, storage_url, original_filename, tags, content_text, metadata, created_at, updated_at
-       FROM knowledge_sources
-       WHERE is_active = TRUE
-         AND (
-           user_id = $1
-           OR idea_id = $2
-           OR stage_id = $3
-           OR phase_id = $4
-           OR source_scope = 'global'
-           OR title ILIKE $5
-           OR content_text ILIKE $5
-         )
-       ORDER BY
-         CASE
-           WHEN user_id = $1 THEN 0
-           WHEN idea_id = $2 THEN 1
-           WHEN stage_id = $3 THEN 2
-           WHEN phase_id = $4 THEN 3
-           ELSE 4
-         END,
-         updated_at DESC
-       LIMIT 20`,
-      [userId, ideaId, stageId, phaseId, questionLike]
-    ),
-    pool.query(
-      `SELECT id, role, message_type, content, created_at
-       FROM conversation_messages
-       WHERE user_id = $1
-       ORDER BY created_at DESC, id DESC
-       LIMIT 8`,
-      [userId]
-    ),
-    pool.query(
-      `SELECT id, memory_scope, summary_text, summary_facts, summary_state, created_at
-       FROM memory_summaries
-       WHERE user_id = $1
-         AND is_active = TRUE
-         AND (
-           profile_id = $2
-           OR idea_id = $3
-           OR phase_id = $4
-           OR stage_id = $5
-           OR memory_scope = 'global'
-         )
-       ORDER BY updated_at DESC, id DESC
-       LIMIT 6`,
-      [userId, profileId, ideaId, phaseId, stageId]
-    ),
-    embedText(question)
-  ]);
+       )
+     ORDER BY
+       CASE
+         WHEN user_id = $1 THEN 0
+         WHEN idea_id = $2 THEN 1
+         WHEN stage_id = $3 THEN 2
+         WHEN phase_id = $4 THEN 3
+         ELSE 4
+       END,
+       updated_at DESC
+     LIMIT 20`,
+    [
+      userId,
+      ideaId,
+      stageId,
+      phaseId,
+      questionLike,
+      agentId
+    ]
+  ),
+
+  pool.query(
+    `SELECT id, role, message_type, content, created_at
+     FROM conversation_messages
+     WHERE user_id = $1
+     ORDER BY created_at DESC, id DESC
+     LIMIT 8`,
+    [userId]
+  ),
+
+  pool.query(
+    `SELECT id, memory_scope, summary_text, summary_facts,
+            summary_state, created_at
+     FROM memory_summaries
+     WHERE user_id = $1
+       AND is_active = TRUE
+       AND (
+         profile_id = $2
+         OR idea_id = $3
+         OR phase_id = $4
+         OR stage_id = $5
+         OR memory_scope = 'global'
+       )
+     ORDER BY updated_at DESC, id DESC
+     LIMIT 6`,
+    [
+      userId,
+      profileId,
+      ideaId,
+      phaseId,
+      stageId
+    ]
+  ),
+
+  embedText(question)
+]);
 
   const [stageDocuments, knowledgeSources] = await Promise.all([
     rerankByEmbedding({
@@ -670,6 +731,10 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
     const [profile, journey] = await Promise.all([getCurrentProfile(userId), loadJourney()]);
     const activePhase = journey[0] || null;
     const activeStage = activePhase?.stages?.[0] || null;
+    const { mentor: activeMentor } = await resolveMentorForStage({
+  phase: activePhase,
+  stage: activeStage
+});
     const sessionId = await getOrCreateSession({
       userId,
       profileId: profile?.id || null,
@@ -685,6 +750,7 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
       ideaId: profile?.idea_id || null,
       phaseId: activePhase?.id || null,
       stageId: activeStage?.id || null,
+      agentId: activeMentor?.id || null,
       question: profile?.current_idea_text || ""
     });
 
@@ -828,6 +894,106 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
   }
 });
 
+
+router.get("/admin/startup/document-access", requireAuth, async (req, res, next) => {
+  try {
+    await requireAdmin(req);
+
+    const [agents, stageDocuments, globalDocuments, access] = await Promise.all([
+      pool.query(`
+        SELECT id, mentor_name, agent_key
+        FROM startup_mentors
+        WHERE is_hidden = FALSE
+        ORDER BY mentor_name ASC
+      `),
+
+      pool.query(`
+        SELECT id, title, 'stage' AS document_kind
+        FROM stage_documents
+        WHERE is_active = TRUE
+        ORDER BY title ASC
+      `),
+
+      pool.query(`
+        SELECT id, title, 'global' AS document_kind
+        FROM knowledge_sources
+        WHERE source_scope = 'global'
+          AND is_active = TRUE
+        ORDER BY title ASC
+      `),
+
+      pool.query(`
+        SELECT agent_id, document_kind, document_id
+        FROM startup_agent_document_access
+      `)
+    ]);
+
+    res.json({
+      agents: agents.rows,
+      documents: [
+        ...stageDocuments.rows,
+        ...globalDocuments.rows
+      ],
+      rules: access.rows
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+router.put("/admin/startup/document-access", requireAuth, async (req, res, next) => {
+  const client = await pool.connect();
+
+  try {
+    await requireAdmin(req);
+
+    const rules = Array.isArray(req.body?.rules)
+      ? req.body.rules
+      : [];
+
+    await client.query("BEGIN");
+
+    await client.query(`
+      DELETE FROM startup_agent_document_access
+    `);
+
+    for (const rule of rules) {
+      const agentId = Number(rule.agent_id);
+      const documentId = Number(rule.document_id);
+      const documentKind = String(rule.document_kind || "");
+
+      if (!Number.isInteger(agentId)) continue;
+      if (!Number.isInteger(documentId)) continue;
+      if (!["stage", "global"].includes(documentKind)) continue;
+
+      await client.query(`
+        INSERT INTO startup_agent_document_access
+          (agent_id, document_kind, document_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (agent_id, document_kind, document_id)
+        DO NOTHING
+      `, [
+        agentId,
+        documentKind,
+        documentId
+      ]);
+    }
+
+    await client.query("COMMIT");
+
+    res.json({
+      message: "Startup document access saved."
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+
 router.post("/startup/query", requireAuth, async (req, res, next) => {
   try {
     const userId = req.auth.userId;
@@ -857,18 +1023,30 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
       language: profile?.preferred_language || "english"
     });
 
-    const [context, existingSessionRow, { mentor, resolution }] = await Promise.all([
-      fetchRetrievedContext({
-        userId,
-        profileId: profile?.id || null,
-        ideaId: profile?.idea_id || null,
-        phaseId: phase?.id || null,
-        stageId: stage?.id || null,
-        question
-      }),
-      pool.query("SELECT memory_summary FROM conversation_sessions WHERE id = $1", [sessionId]),
-      resolveMentorForStage({ phase, stage })
-    ]);
+    const { mentor, resolution } = await resolveMentorForStage({
+  phase,
+  stage
+});
+
+const [
+  context,
+  existingSessionRow
+] = await Promise.all([
+  fetchRetrievedContext({
+    userId,
+    profileId: profile?.id || null,
+    ideaId: profile?.idea_id || null,
+    phaseId: phase?.id || null,
+    stageId: stage?.id || null,
+    agentId: mentor.id,
+    question
+  }),
+
+  pool.query(
+    "SELECT memory_summary FROM conversation_sessions WHERE id = $1",
+    [sessionId]
+  )
+]);
     const existingSummary = existingSessionRow.rows[0]?.memory_summary || "";
     const recentMessages = [...context.recent_messages];
 

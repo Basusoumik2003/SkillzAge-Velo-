@@ -16,7 +16,8 @@ import {
   Trash2,
   Upload
 } from "lucide-react";
-
+import StartupDocumentAccessMatrix
+  from "@/components/adminJourney/StartupDocumentAccessMatrix";
 import useRequireAuth from "@/lib/useRequireAuth";
 import MentorManager from "@/components/adminDashboard/MentorManager";
 import {
@@ -1913,7 +1914,7 @@ const removeStage = async (stage) => {
             </div>
           </div>
         </Panel>
-
+<StartupDocumentAccessMatrix />
         <MentorManager onMentorsChanged={loadMentors} />
       </div>
     </main>

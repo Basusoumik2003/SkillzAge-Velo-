@@ -151,3 +151,18 @@ export async function deleteAdminStartupMentor(mentorId) {
   const { data } = await adminApi.delete(`/startup/mentors/${mentorId}`);
   return data;
 }
+
+
+export async function getAdminStartupDocumentAccess() {
+  const { data } = await adminApi.get("/startup/document-access");
+  return data;
+}
+
+export async function updateAdminStartupDocumentAccess(rules) {
+  const { data } = await adminApi.put(
+    "/startup/document-access",
+    { rules }
+  );
+
+  return data;
+}
