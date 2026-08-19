@@ -73,12 +73,10 @@ Body:
 {
   "fullName": "Jane Doe",
   "email": "jane@example.com",
-  "gender": "female",
   "password": "Passw0rd123",
   "confirmPassword": "Passw0rd123"
 }
 ```
-- `gender` must be one of `male`, `female`, `other`.
 - `password` must be ≥8 chars with an uppercase letter, a lowercase letter, and a number.
 - `confirmPassword` must match `password` (validated server-side before hashing).
 
@@ -88,7 +86,7 @@ Response `201`:
   "success": true,
   "message": "Signup successful",
   "data": {
-    "user": { "id": "...", "full_name": "Jane Doe", "email": "jane@example.com", "gender": "female", "created_at": "...", "updated_at": "..." },
+    "user": { "id": "...", "full_name": "Jane Doe", "email": "jane@example.com", "created_at": "...", "updated_at": "..." },
     "token": "<jwt>"
   }
 }
@@ -102,7 +100,10 @@ Body:
 Response `200`: same shape as signup (`user` + `token`).
 
 ### GET /api/auth/me
-Protected route. Send `Authorization: Bearer <token>`. Returns the current user's profile.
+Protected route. Send `Authorization: Bearer <token>`. Returns the current authenticated user account.
+
+### Profile APIs
+Profile CRUD lives in the dedicated profile service and is proxied through the gateway at `GET /api/profile`, `PUT /api/profile`, and `DELETE /api/profile`.
 
 ## Security notes
 - Passwords are hashed with `bcryptjs` (never stored in plain text).

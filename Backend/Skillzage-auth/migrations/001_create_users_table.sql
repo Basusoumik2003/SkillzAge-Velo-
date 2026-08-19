@@ -4,18 +4,10 @@
 -- +up
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-DO $$
-BEGIN
-    CREATE TYPE gender_type AS ENUM ('male', 'female', 'other');
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
-END $$;
-
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     full_name VARCHAR(150) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
-    gender gender_type NOT NULL DEFAULT 'other',
     password_hash VARCHAR(255) NOT NULL DEFAULT '',
     wix_member_id VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -31,6 +23,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wix_member_id
 DROP INDEX IF EXISTS idx_users_wix_member_id;
 DROP INDEX IF EXISTS idx_users_email;
 DROP TABLE IF EXISTS users;
-DROP TYPE IF EXISTS gender_type;
 
 

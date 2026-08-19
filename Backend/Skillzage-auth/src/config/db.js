@@ -23,7 +23,16 @@ pool.on('error', (err) => {
   process.exit(1);
 });
 
+async function ensureUsersSchema() {
+  await pool.query(`
+    ALTER TABLE IF EXISTS users
+      ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS wix_member_id VARCHAR(255);
+  `);
+}
+
 module.exports = {
+  ensureUsersSchema,
   query: async (text, params) => {
     logDb('query:start', {
       text,

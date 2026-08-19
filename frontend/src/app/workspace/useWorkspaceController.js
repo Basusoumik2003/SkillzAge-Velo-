@@ -638,6 +638,12 @@ export default function useWorkspaceController() {
   const [workspaceMode, setWorkspaceMode] = useState("backend");
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [storedUserState, setStoredUserState] = useState(() => getStoredUser());
+  const [storedProfileState, setStoredProfileState] = useState(() => getStoredProfile());
+  const [authReady, setAuthReady] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return Boolean(window.localStorage.getItem("internlabs_token"));
+  });
   const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceClosed, setWorkspaceClosed] = useState({ closed: false, message: "" });
   const [projectName, setProjectName] = useState("");
@@ -700,6 +706,42 @@ export default function useWorkspaceController() {
     return catalogProject.steps.length;
   }, [catalogProject]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const syncAuthReady = () => {
+      setAuthReady(Boolean(window.localStorage.getItem("internlabs_token")));
+    };
+
+    const handleAuthReady = () => {
+      syncAuthReady();
+    };
+
+    window.addEventListener("WORKSPACE_AUTH_READY", handleAuthReady);
+    syncAuthReady();
+
+    return () => {
+      window.removeEventListener("WORKSPACE_AUTH_READY", handleAuthReady);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const syncStoredProfile = () => {
+      console.log("[WORKSPACE PROFILE] Refreshing stored profile");
+      setStoredUserState(getStoredUser());
+      setStoredProfileState(getStoredProfile());
+    };
+
+    syncStoredProfile();
+    window.addEventListener("internlabs_profile_updated", syncStoredProfile);
+
+    return () => {
+      window.removeEventListener("internlabs_profile_updated", syncStoredProfile);
+    };
+  }, []);
+
   const activateOfflineWorkspace = (fallbackTitle = "") => {
     const demoProject = createDemoWorkspaceProject(fallbackTitle || projectName || DEMO_WORKSPACE_TITLE);
     setWorkspaceMode("demo");
@@ -734,7 +776,7 @@ export default function useWorkspaceController() {
   useEffect(() => {
     let cancelled = false;
     async function loadMentors() {
-      if (!projectName) return;
+      if (!authReady || !projectName) return;
       try {
         const isStartupJourney = String(projectName).trim().toLowerCase() === "startup journey";
         const data = isStartupJourney ? await getStartupMentors() : await getDashboardMentors();
@@ -763,11 +805,11 @@ export default function useWorkspaceController() {
     return () => {
       cancelled = true;
     };
-  }, [projectName]);
+  }, [authReady, projectName]);
 
 
   useEffect(() => {
-  if (!ready) return;
+  if (!ready || !authReady) return;
 
   let cancelled = false;
 
@@ -845,7 +887,7 @@ export default function useWorkspaceController() {
   return () => {
     cancelled = true;
   };
-}, [ready]);
+}, [authReady, ready]);
 
   const methodDisplayStep = useMemo(() => {
     return clampStep(methodState.current_step, methodTotalSteps || 1);
@@ -1334,7 +1376,7 @@ export default function useWorkspaceController() {
   }, [messages, projectName, ready, stageMessagesByKey]);
 
   useEffect(() => {
-    if (!ready || !projectName || workspaceMode === "demo") return;
+    if (!ready || !authReady || !projectName || workspaceMode === "demo") return;
     let active = true;
     const loadCatalog = async () => {
        if (projectName === "Startup Journey") return;
@@ -1409,10 +1451,10 @@ export default function useWorkspaceController() {
     return () => {
       active = false;
     };
-  }, [projectName, ready, workspaceMode]);
+  }, [authReady, projectName, ready, workspaceMode]);
 
   useEffect(() => {
-    if (!ready || !projectName || historyLoadedProject === projectName || workspaceMode === "demo") return;
+    if (!ready || !authReady || !projectName || historyLoadedProject === projectName || workspaceMode === "demo") return;
     let cancelled = false;
     async function loadChatHistory() {
       try {
@@ -1449,10 +1491,10 @@ export default function useWorkspaceController() {
     return () => {
       cancelled = true;
     };
-  }, [currentStageKey, historyLoadedProject, projectName, ready, workspaceMode]);
+  }, [authReady, currentStageKey, historyLoadedProject, projectName, ready, workspaceMode]);
 
   useEffect(() => {
-    if (!ready || !projectName || !currentStageKey || (taskViewByStep[selectedPoint] || "about") !== "stage" || workspaceMode === "demo") return;
+    if (!ready || !authReady || !projectName || !currentStageKey || (taskViewByStep[selectedPoint] || "about") !== "stage" || workspaceMode === "demo") return;
     let cancelled = false;
     async function loadCurrentStageChatHistory() {
       try {
@@ -1508,7 +1550,7 @@ export default function useWorkspaceController() {
     return () => {
       cancelled = true;
     };
-  }, [activeStageAgentKey, activeStageData, activeStageIndex, activeStageMentor, currentStageKey, projectName, ready, selectedPoint, selectedPointData, stageDocuments, taskViewByStep, workspaceMode]);
+  }, [activeStageAgentKey, activeStageData, activeStageIndex, activeStageMentor, authReady, currentStageKey, projectName, ready, selectedPoint, selectedPointData, stageDocuments, taskViewByStep, workspaceMode]);
 
   useEffect(() => {
     if (!workspacePoints.length || !workspacePositionKey || workspaceMode === "demo") return;
@@ -2380,20 +2422,27 @@ export default function useWorkspaceController() {
 
   const promptTaskView = taskViewByStep[selectedPoint] || "about";
   const promptActiveStageKey = currentStageKey;
-  const storedUser = useMemo(() => getStoredUser(), []);
-  const storedProfile = useMemo(() => getStoredProfile(), []);
+  const storedUser = storedUserState;
+  const storedProfile = storedProfileState;
   const studentName = useMemo(() => {
-    const rawName = String(storedUser?.name || storedUser?.email?.split("@")?.[0] || "").trim();
-    return rawName || "there";
-  }, [storedUser]);
-  const studentAvatarUrl = useMemo(() => {
-    return resolveAuthAssetUrl(
-      profileAvatarUrl ||
-      storedProfile?.profile_image_url ||
-      storedUser?.profile_image_url ||
-      storedUser?.avatar_url ||
+    const name = String(
+      storedProfile?.full_name ||
+      storedUser?.full_name ||
+      storedUser?.name ||
+      storedUser?.email?.split("@")?.[0] ||
       ""
-    );
+    ).trim();
+    return name || "there";
+  }, [storedProfile, storedUser]);
+  const studentAvatarUrl = useMemo(() => {
+    const avatar =
+      storedProfile?.avatar_url ||
+      storedProfile?.profile_image_url ||
+      storedUser?.avatar_url ||
+      storedUser?.profile_image_url ||
+      profileAvatarUrl ||
+      "";
+    return resolveAuthAssetUrl(avatar);
   }, [profileAvatarUrl, storedProfile, storedUser]);
   const stageAgentLabel = stageAgentName(activeStageMentor, activeStageAgentKey);
   const stageDisplayAgentLabel = displayStageAgentName(
@@ -2428,7 +2477,7 @@ export default function useWorkspaceController() {
 
   useEffect(() => {
     let cancelled = false;
-    if (workspaceMode === "demo") {
+    if (!authReady || workspaceMode === "demo") {
       setProfileAvatarUrl("");
       return () => {
         cancelled = true;
@@ -2443,7 +2492,7 @@ export default function useWorkspaceController() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceMode]);
+  }, [authReady, workspaceMode]);
   const stageIntroMessages = useMemo(() => {
     if (!activeStageData) return [];
     const agent = stageDisplayAgentLabel;

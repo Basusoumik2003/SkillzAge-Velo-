@@ -53,12 +53,11 @@ function normalizeWixPayload(body) {
 
 async function signup(req, res, next) {
   try {
-    const { fullName, email, gender, password } = req.body;
+    const { fullName, email, password } = req.body;
     logAuth('signup:start', {
       body: req.body,
       fullName,
       email,
-      gender,
       passwordLength: String(password || '').length,
       headers: {
         'user-agent': req.headers['user-agent'],
@@ -81,7 +80,6 @@ async function signup(req, res, next) {
     logAuth('signup:creating-user', {
       fullName,
       email,
-      gender,
       passwordLength: String(password || '').length,
     });
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
@@ -89,7 +87,7 @@ async function signup(req, res, next) {
       email,
       hashLength: String(passwordHash || '').length,
     });
-    const user = await userModel.createUser({ fullName, email, gender, passwordHash });
+    const user = await userModel.createUser({ fullName, email, passwordHash });
     logAuth('signup:user-created', { email, user });
     const token = tokenForUser(user);
     logAuth('signup:token-created', {
@@ -140,7 +138,6 @@ async function login(req, res, next) {
         user = await userModel.createUser({
           fullName: 'Development User',
           email: normalizedEmail,
-          gender: 'other',
           passwordHash: '',
         });
         logAuth('login:bypass-user-created', { normalizedEmail, user });
@@ -240,7 +237,7 @@ async function syncWixMember(req, res, next) {
   }
 }
 
-/** Returns the authenticated user's profile. Requires the requireAuth middleware. */
+/** Returns the authenticated user account. Requires the requireAuth middleware. */
 async function me(req, res, next) {
   try {
     const user = await userModel.findById(req.user.id);

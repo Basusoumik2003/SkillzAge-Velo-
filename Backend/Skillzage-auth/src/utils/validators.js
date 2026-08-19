@@ -16,13 +16,6 @@ const signupValidators = [
     .withMessage('Email must be a valid email address')
     .normalizeEmail(),
 
-  body('gender')
-    .trim()
-    .notEmpty()
-    .withMessage('Gender is required')
-    .isIn(['male', 'female', 'other'])
-    .withMessage('Gender must be one of: male, female, other'),
-
   body('password')
     .isString()
     .isLength({ min: 8 })

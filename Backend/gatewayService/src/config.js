@@ -21,7 +21,7 @@ function asOriginList(value, fallback) {
 }
 
 export const config = {
-  port: asNumber(process.env.PORT, 8001),
+  port: asNumber(process.env.GATEWAY_PORT || process.env.PORT, 8007),
   nodeEnv: process.env.NODE_ENV || "development",
   databaseUrl: process.env.DATABASE_URL || "",
   jwtSecretKey: process.env.JWT_SECRET_KEY || "change_me",
@@ -38,7 +38,7 @@ export const config = {
   ),
   services: {
     auth: process.env.AUTH_SERVICE_URL || "http://127.0.0.1:8002",
-    profile: process.env.PROFILE_SERVICE_URL || "http://127.0.0.1:8003",
+   profile: process.env.PROFILE_SERVICE_URL || "http://127.0.0.1:5002",
     admin: process.env.ADMIN_SERVICE_URL || "http://127.0.0.1:8004",
     user: process.env.USER_SERVICE_URL || "http://127.0.0.1:8008",
     contact: process.env.CONTACT_SERVICE_URL || "http://127.0.0.1:8005",

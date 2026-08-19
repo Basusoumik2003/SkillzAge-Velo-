@@ -3,7 +3,7 @@ const db = require('../config/db');
 const PUBLIC_USER_FIELDS =
   'id, full_name, email, wix_member_id, created_at, updated_at';
 const AUTH_USER_FIELDS =
-  'id, full_name, email, gender, password_hash, wix_member_id, created_at, updated_at';
+  'id, full_name, email, password_hash, wix_member_id, created_at, updated_at';
 
 function logUserModel(action, details) {
   console.log(`[userModel:${action}]`, details);
@@ -41,7 +41,6 @@ async function findAuthUserByEmail(email) {
           id: user.id,
           full_name: user.full_name,
           email: user.email,
-          gender: user.gender,
           wix_member_id: user.wix_member_id,
           hasPasswordHash: Boolean(user.password_hash),
         }
@@ -78,11 +77,10 @@ async function findByWixMemberId(wixMemberId) {
   return user;
 }
 
-async function createUser({ fullName, email, gender, passwordHash = '', wixMemberId = null }) {
+async function createUser({ fullName, email, passwordHash = '', wixMemberId = null }) {
   logUserModel('createUser:start', {
     fullName,
     email,
-    gender,
     hasPasswordHash: Boolean(passwordHash),
     wixMemberId,
   });
@@ -91,13 +89,12 @@ async function createUser({ fullName, email, gender, passwordHash = '', wixMembe
     `INSERT INTO users (
       full_name,
       email,
-      gender,
       password_hash,
       wix_member_id
     )
-    VALUES ($1, $2, $3, $4, $5)
+    VALUES ($1, $2, $3, $4)
     RETURNING ${PUBLIC_USER_FIELDS}`,
-    [fullName, email, gender, passwordHash, wixMemberId]
+    [fullName, email, passwordHash, wixMemberId]
   );
 
   const user = rows[0] || null;
