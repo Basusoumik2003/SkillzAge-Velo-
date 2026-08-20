@@ -21,6 +21,7 @@ router.use("/profile", profileProxy);
 router.use("/chat", pythonProxy);
 router.use("/project", pythonProxy);
 router.use("/github", pythonProxy);
+router.use("/deliverables", pythonProxy);
 router.use("/contact", contactProxy);
 router.use("/admin", adminProxy);
 router.use("/startup", adminProxy);

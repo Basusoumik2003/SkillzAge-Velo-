@@ -13,7 +13,8 @@ from app.db.database import get_db
 from app.db.github_models import CodeReview, GitHubRepository
 from app.db.models import Mentor, MentorChatMessage, Project, ProjectProgress, User
 from app.routes.auth import get_current_user
-from app.services.context_builder import apply_review_feedback, build_context, current_stage_label, project_tasks_from_db
+from app.services.context_builder import apply_review_feedback, build_context, current_stage_label, is_startup_project, project_tasks_from_db
+from app.services.startup_progress import StartupProgressAnchor, mark_stage_complete
 from app.services.chat_cache import append_cached_messages, get_cached_history, set_cached_history
 from app.services.chat_context_optimizer import (
     is_cacheable_llm_message,
@@ -1452,7 +1453,30 @@ def _friendly_low_intent_response(payload: ChatInput, intent: IntentClassificati
     return f"I am here for {stage_label}. Please ask about the task, share your draft, or tell me what is confusing."
 
 
-def _project_payload(progress: ProjectProgress, db: Session | None = None) -> dict:
+def _resolve_progress_anchor(db: Session, user: User, project_name: str) -> ProjectProgress | StartupProgressAnchor | None:
+    """Resolves the "has this user selected this project" state used at the
+    top of every /chat endpoint. Startup-journey projects (project_name
+    starting with "startup") don't have a project_progress row at all - they
+    use student_profiles/student_stage_progress instead (see
+    app/services/startup_progress.py); everything else keeps using
+    ProjectProgress unchanged."""
+    if is_startup_project(project_name):
+        has_profile = db.execute(
+            text("SELECT 1 FROM student_profiles WHERE user_id = :user_id LIMIT 1"),
+            {"user_id": user.id},
+        ).first()
+        if not has_profile:
+            return None
+        return StartupProgressAnchor.build(db, user.id, project_name)
+
+    return (
+        db.query(ProjectProgress)
+        .filter(ProjectProgress.user_id == user.id, ProjectProgress.project_name == project_name)
+        .first()
+    )
+
+
+def _project_payload(progress: ProjectProgress | StartupProgressAnchor, db: Session | None = None) -> dict:
     return {
         "name": progress.project_name,
         "current_step": progress.current_step,
@@ -1702,11 +1726,7 @@ def _bootstrap_pm_messages(context: dict) -> list[str]:
 
 @router.post("/bootstrap")
 def mentor_bootstrap(payload: BootstrapInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    progress = (
-        db.query(ProjectProgress)
-        .filter(ProjectProgress.user_id == user.id, ProjectProgress.project_name == payload.project_name)
-        .first()
-    )
+    progress = _resolve_progress_anchor(db, user, payload.project_name)
 
     if not progress:
         raise HTTPException(status_code=404, detail="Please select a project first")
@@ -1747,11 +1767,7 @@ def save_local_chat_message(payload: LocalChatMessageInput, db: Session = Depend
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
 
-    progress = (
-        db.query(ProjectProgress)
-        .filter(ProjectProgress.user_id == user.id, ProjectProgress.project_name == project_name)
-        .first()
-    )
+    progress = _resolve_progress_anchor(db, user, project_name)
     if not progress:
         raise HTTPException(status_code=404, detail="Please select a project first")
 
@@ -1790,11 +1806,7 @@ def save_local_chat_message(payload: LocalChatMessageInput, db: Session = Depend
 
 @router.post("/")
 def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    progress = (
-        db.query(ProjectProgress)
-        .filter(ProjectProgress.user_id == user.id, ProjectProgress.project_name == payload.project_name)
-        .first()
-    )
+    progress = _resolve_progress_anchor(db, user, payload.project_name)
 
     if not progress:
         raise HTTPException(status_code=404, detail="Please select a project first")
@@ -2041,15 +2053,25 @@ def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = 
         }
 
     if payload.complete_task:
-        done = [task for task in (progress.completed_tasks or "").split("||") if task]
-        if payload.complete_task not in done:
-            done.append(payload.complete_task)
-        progress.completed_tasks = "||".join(done)
-        task_count = len(project_tasks_from_db(db, progress.project_name))
-        progress.current_step = min(task_count, len(done) + 1) if task_count else len(done) + 1
-        db.add(progress)
-        db.commit()
-        db.refresh(progress)
+        if startup_project:
+            mark_stage_complete(
+                db,
+                user.id,
+                phase_order=payload.step_number,
+                stage_order=(payload.stage_index + 1) if payload.stage_index is not None else None,
+                phase_name=payload.complete_task,
+            )
+            progress = StartupProgressAnchor.build(db, user.id, progress.project_name)
+        else:
+            done = [task for task in (progress.completed_tasks or "").split("||") if task]
+            if payload.complete_task not in done:
+                done.append(payload.complete_task)
+            progress.completed_tasks = "||".join(done)
+            task_count = len(project_tasks_from_db(db, progress.project_name))
+            progress.current_step = min(task_count, len(done) + 1) if task_count else len(done) + 1
+            db.add(progress)
+            db.commit()
+            db.refresh(progress)
 
     latest_review = (
         db.query(CodeReview)
@@ -2204,6 +2226,10 @@ def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = 
                 max_chunks=max_chunks,
                 max_context_chars=max_context_chars,
                 min_relevance_score=min_score,
+                step_number=payload.step_number,
+                stage_index=payload.stage_index,
+                stage_key=payload.stage_key,
+                user_id=user.id,
             )
             rag_chunks = rag_context.get("chunks") or []
             if rag_context.get("chunks"):
@@ -2321,11 +2347,7 @@ def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = 
 
 @router.post("/stage-document-review")
 def review_stage_document(payload: StageDocumentReviewInput, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    progress = (
-        db.query(ProjectProgress)
-        .filter(ProjectProgress.user_id == user.id, ProjectProgress.project_name == payload.project_name)
-        .first()
-    )
+    progress = _resolve_progress_anchor(db, user, payload.project_name)
     if not progress:
         raise HTTPException(status_code=404, detail="Please select a project first")
     if payload.step_number < 1 or payload.stage_index < 0:
@@ -2746,6 +2768,10 @@ def review_stage_document(payload: StageDocumentReviewInput, db: Session = Depen
             max_context_chars=max_context_chars,
             min_relevance_score=min_score,
             lexical_only=True,
+            step_number=payload.step_number,
+            stage_index=payload.stage_index,
+            stage_key=payload.stage_key,
+            user_id=user.id,
         )
         rag_chunks = review_rag_context.get("chunks") or []
         rag_trace_step["status"] = "SUCCESS" if rag_chunks else "SKIPPED"

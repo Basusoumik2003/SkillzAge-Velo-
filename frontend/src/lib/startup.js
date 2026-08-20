@@ -47,8 +47,10 @@ export async function submitStartupQuery(payload) {
   return data;
 }
 
-export async function listAdminJourney() {
-  const { data } = await adminApi.get("/startup/journey");
+export async function listAdminJourney(journeyId) {
+  const { data } = await adminApi.get("/startup/journey", {
+    params: journeyId ? { journey_id: journeyId } : undefined
+  });
   return data;
 }
 

@@ -316,17 +316,4 @@ CREATE TABLE IF NOT EXISTS web_search_results (
 CREATE INDEX IF NOT EXISTS ix_web_search_results_agent_run_id ON web_search_results(agent_run_id);
 CREATE INDEX IF NOT EXISTS ix_web_search_results_query_text ON web_search_results USING GIN (to_tsvector('english', query_text));
 
--- +down
-DROP TABLE IF EXISTS web_search_results;
-DROP TABLE IF EXISTS agent_runs;
-DROP TABLE IF EXISTS student_stage_progress;
-DROP TABLE IF EXISTS memory_summaries;
-DROP TABLE IF EXISTS conversation_messages;
-DROP TABLE IF EXISTS conversation_sessions;
-DROP TABLE IF EXISTS knowledge_chunks;
-DROP TABLE IF EXISTS knowledge_sources;
-DROP TABLE IF EXISTS stage_documents;
-DROP TABLE IF EXISTS journey_stages;
-DROP TABLE IF EXISTS journey_phases;
-DROP TABLE IF EXISTS startup_ideas;
-DROP TABLE IF EXISTS student_profiles;
+

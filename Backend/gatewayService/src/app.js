@@ -41,6 +41,7 @@ app.use("/auth", authProxy);
 app.use("/chat", pythonProxy);
 app.use("/project", pythonProxy);
 app.use("/github", pythonProxy);
+app.use("/deliverables", pythonProxy);
 app.use("/api", apiRoutes);
 
 app.use((err, req, res, _next) => {
