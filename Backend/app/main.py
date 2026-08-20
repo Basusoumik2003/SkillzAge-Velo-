@@ -9,9 +9,8 @@ from starlette.responses import JSONResponse
 
 from app.db.database import Base, engine
 from app.db import github_models, models  # noqa: F401
-from app.routes import chat, project
+from app.routes import chat, deliverables, project
 from app.core.config import get_settings
-from app.services.review_scheduler import ReviewScheduler
 
 settings = get_settings()
 allowed_origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
@@ -25,8 +24,6 @@ logger = logging.getLogger("internlabs-api")
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="InternLabs API", version="1.0.0")
-review_scheduler = ReviewScheduler.from_settings()
-app.state.review_scheduler = review_scheduler
 
 app.add_middleware(
     CORSMiddleware,
@@ -80,25 +77,11 @@ async def request_logging_middleware(request: Request, call_next):
     return response
 
 
-app.include_router(project.router)
 app.include_router(chat.router)
-
-
-@app.on_event("startup")
-def startup_event():
-    review_scheduler.start()
-
-
-@app.on_event("shutdown")
-def shutdown_event():
-    review_scheduler.stop()
+app.include_router(project.router)
+app.include_router(deliverables.router)
 
 
 @app.get("/")
 def health_check():
     return {"status": "ok", "service": "InternLabs API"}
-
-
-@app.get("/health/scheduler")
-def scheduler_health():
-    return review_scheduler.health().to_dict()

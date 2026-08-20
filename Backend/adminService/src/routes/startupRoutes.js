@@ -245,17 +245,19 @@ async function requireAdmin(req) {
   }
 }
 
-async function fetchPhaseRows() {
+async function fetchPhaseRows({ journeyId = null } = {}) {
   const { rows } = await pool.query(
-    `SELECT id, phase_key, phase_order, phase_name, phase_description, phase_objective,
+    `SELECT id, journey_id, phase_key, phase_order, phase_name, phase_description, phase_objective,
             intended_audience, default_agent_key, is_active, created_by, created_at, updated_at
      FROM journey_phases
-     ORDER BY phase_order ASC, id ASC`
+     WHERE ($1::int IS NULL OR journey_id = $1)
+     ORDER BY phase_order ASC, id ASC`,
+    [journeyId]
   );
   return rows;
 }
 
-async function fetchStageRows() {
+async function fetchStageRows({ journeyId = null } = {}) {
   const { rows } = await pool.query(
     `SELECT js.id, js.phase_id, js.mentor_id, js.stage_key, js.stage_order, js.stage_name, js.stage_context, js.stage_objective,
             js.expected_outcome, js.readiness_criteria, js.recommended_actions, js.is_active,
@@ -263,10 +265,26 @@ async function fetchStageRows() {
             sm.mentor_name AS mentor_name,
             js.created_by, js.created_at, js.updated_at
      FROM journey_stages js
+     INNER JOIN journey_phases jp ON jp.id = js.phase_id
      LEFT JOIN startup_mentors sm ON sm.id = js.mentor_id
-     ORDER BY js.phase_id ASC, js.stage_order ASC, js.id ASC`
+     WHERE ($1::int IS NULL OR jp.journey_id = $1)
+     ORDER BY js.phase_id ASC, js.stage_order ASC, js.id ASC`,
+    [journeyId]
   );
   return rows;
+}
+
+/** Resolves which journeys row a student's workspace/query should use:
+ * their own explicit pick -> the journey marked is_default -> the first
+ * active journey by id -> null (nothing configured at all). */
+async function resolveEffectiveJourneyId(profile) {
+  if (profile?.journey_id) return profile.journey_id;
+
+  const defaultRow = await pool.query("SELECT id FROM journeys WHERE is_default = TRUE LIMIT 1");
+  if (defaultRow.rows[0]?.id) return defaultRow.rows[0].id;
+
+  const firstActive = await pool.query("SELECT id FROM journeys WHERE is_active = TRUE ORDER BY id ASC LIMIT 1");
+  return firstActive.rows[0]?.id || null;
 }
 
 /**
@@ -318,8 +336,8 @@ function nestJourney(phases, stages) {
   }));
 }
 
-async function loadJourney() {
-  const [phases, stages] = await Promise.all([fetchPhaseRows(), fetchStageRows()]);
+async function loadJourney({ journeyId = null } = {}) {
+  const [phases, stages] = await Promise.all([fetchPhaseRows({ journeyId }), fetchStageRows({ journeyId })]);
   return nestJourney(phases, stages);
 }
 
@@ -667,7 +685,9 @@ async function upsertSessionMemory({ sessionId, userId, profileId, ideaId, phase
 router.get("/startup/workspace", requireAuth, async (req, res, next) => {
   try {
     const userId = req.auth.userId;
-    const [profile, journey] = await Promise.all([getCurrentProfile(userId), loadJourney()]);
+    const profile = await getCurrentProfile(userId);
+    const journeyId = await resolveEffectiveJourneyId(profile);
+    const journey = await loadJourney({ journeyId });
     const activePhase = journey[0] || null;
     const activeStage = activePhase?.stages?.[0] || null;
     const sessionId = await getOrCreateSession({
@@ -690,6 +710,7 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
 
     res.json({
       profile,
+      journey_id: journeyId,
       journey,
       active_phase: activePhase,
       active_stage: activeStage,
@@ -823,6 +844,49 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
     }
 
     res.json({ profile, idea });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/startup/journeys", requireAuth, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM journeys WHERE is_active = TRUE ORDER BY is_default DESC, journey_name ASC"
+    );
+    res.json({ journeys: result.rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/startup/journey/select", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.auth.userId;
+    const journeyId = normalizeInteger(req.body?.journey_id || req.body?.journeyId, null);
+    if (!journeyId) {
+      return res.status(400).json({ detail: "journey_id is required." });
+    }
+
+    const journeyRow = await pool.query(
+      "SELECT * FROM journeys WHERE id = $1 AND is_active = TRUE LIMIT 1",
+      [journeyId]
+    );
+    if (!journeyRow.rows.length) {
+      return res.status(404).json({ detail: "Journey not found." });
+    }
+
+    const result = await pool.query(
+      `UPDATE student_profiles SET journey_id = $2, updated_at = NOW()
+       WHERE user_id = $1
+       RETURNING *`,
+      [userId, journeyId]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ detail: "Complete your profile before selecting a journey." });
+    }
+
+    res.json({ profile: result.rows[0], journey: journeyRow.rows[0] });
   } catch (error) {
     next(error);
   }
@@ -1103,8 +1167,10 @@ router.delete("/admin/startup/journeys/:id", requireAuth, async (req, res, next)
 router.get("/admin/startup/journey", requireAuth, async (req, res, next) => {
   try {
     await requireAdmin(req);
-    const journey = await loadJourney();
-    res.json({ journey });
+    const requestedJourneyId = normalizeInteger(req.query?.journey_id || req.query?.journeyId, null);
+    const journeyId = requestedJourneyId || (await resolveEffectiveJourneyId(null));
+    const journey = await loadJourney({ journeyId });
+    res.json({ journey_id: journeyId, journey });
   } catch (error) {
     next(error);
   }
@@ -1118,15 +1184,18 @@ router.post("/admin/startup/phases", requireAuth, async (req, res, next) => {
     if (!phaseKey || !phaseName) {
       return res.status(400).json({ detail: "Phase key and phase name are required." });
     }
+    const journeyId =
+      normalizeInteger(req.body?.journey_id || req.body?.journeyId, null) || (await resolveEffectiveJourneyId(null));
 
     const result = await pool.query(
       `INSERT INTO journey_phases (
-        phase_key, phase_order, phase_name, phase_description, phase_objective,
+        journey_id, phase_key, phase_order, phase_name, phase_description, phase_objective,
         intended_audience, default_agent_key, is_active, created_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, TRUE), $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, TRUE), $10)
       RETURNING *`,
       [
+        journeyId,
         phaseKey,
         normalizeInteger(req.body?.phase_order || req.body?.phaseOrder, 0),
         phaseName,
@@ -1150,19 +1219,21 @@ router.put("/admin/startup/phases/:id", requireAuth, async (req, res, next) => {
     const id = normalizeInteger(req.params.id, null);
     const result = await pool.query(
       `UPDATE journey_phases
-       SET phase_key = COALESCE(NULLIF($2, ''), phase_key),
-           phase_order = COALESCE($3, phase_order),
-           phase_name = COALESCE(NULLIF($4, ''), phase_name),
-           phase_description = COALESCE($5, phase_description),
-           phase_objective = COALESCE($6, phase_objective),
-           intended_audience = COALESCE($7, intended_audience),
-           default_agent_key = COALESCE($8, default_agent_key),
-           is_active = COALESCE($9, is_active),
+       SET journey_id = COALESCE($2, journey_id),
+           phase_key = COALESCE(NULLIF($3, ''), phase_key),
+           phase_order = COALESCE($4, phase_order),
+           phase_name = COALESCE(NULLIF($5, ''), phase_name),
+           phase_description = COALESCE($6, phase_description),
+           phase_objective = COALESCE($7, phase_objective),
+           intended_audience = COALESCE($8, intended_audience),
+           default_agent_key = COALESCE($9, default_agent_key),
+           is_active = COALESCE($10, is_active),
            updated_at = NOW()
        WHERE id = $1
        RETURNING *`,
       [
         id,
+        normalizeInteger(req.body?.journey_id || req.body?.journeyId, null),
         normalizeText(req.body?.phase_key || req.body?.phaseKey, 80),
         normalizeInteger(req.body?.phase_order || req.body?.phaseOrder, null),
         normalizeText(req.body?.phase_name || req.body?.phaseName, 160),

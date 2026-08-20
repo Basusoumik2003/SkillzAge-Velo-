@@ -10,8 +10,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(
-            Path(__file__).resolve().parents[2] / ".env",
             Path(__file__).resolve().parents[3] / ".env",
+            Path(__file__).resolve().parents[2] / ".env",
+            Path(__file__).resolve().parents[1] / ".env",
         ),
         env_file_encoding="utf-8",
         extra="ignore",
@@ -21,9 +22,14 @@ class Settings(BaseSettings):
     cors_origins: str = Field(default="http://localhost:3000,http://127.0.0.1:3000", alias="CORS_ORIGINS")
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    openai_model: str = Field(default="gpt-5.6-luna", alias="OPENAI_MODEL")
+    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
     openai_light_model: str = Field(default="", alias="OPENAI_LIGHT_MODEL")
     openai_mentor_model: str = Field(default="", alias="OPENAI_MENTOR_MODEL")
+    openai_embedding_model: str = Field(default="text-embedding-3-small", alias="OPENAI_EMBEDDING_MODEL")
+
+    redis_url: str = Field(default="", alias="REDIS_URL")
+    chat_history_cache_limit: int = Field(default=100, alias="CHAT_HISTORY_CACHE_LIMIT")
+    chat_history_cache_ttl_seconds: int = Field(default=900, alias="CHAT_HISTORY_CACHE_TTL_SECONDS")
 
     aws_access_key_id: str = Field(default="", alias="AWS_ACCESS_KEY_ID")
     aws_secret_access_key: str = Field(default="", alias="AWS_SECRET_ACCESS_KEY")
@@ -74,6 +80,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str = Field(default="change_me", alias="JWT_SECRET_KEY")
     jwt_issuer: str = Field(default="internlabs-auth-service", alias="JWT_ISSUER")
     jwt_audience: str = Field(default="internlabs-api", alias="JWT_AUDIENCE")
+    bypass_api_auth: bool = Field(default=False, alias="BYPASS_API_AUTH")
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -83,4 +90,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

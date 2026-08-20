@@ -7,7 +7,9 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.db.models import Project, ProjectProgress, Subscription, User
 from app.routes.auth import get_current_user
+from app.services.context_builder import is_startup_project
 from app.services.resume_parser import extract_resume_text
+from app.services.startup_progress import ensure_student_profile, get_startup_progress_state
 
 router = APIRouter(prefix="/project", tags=["project"])
 
@@ -62,6 +64,22 @@ def select_project(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    if is_startup_project(payload.project_name):
+        # Startup-journey projects aren't in the `projects` catalog table and
+        # don't use project_progress - "selecting" one just means the student
+        # has a student_profiles row; per-stage progress lives in
+        # student_stage_progress (see app/services/startup_progress.py).
+        ensure_student_profile(db, user.id)
+        state = get_startup_progress_state(db, user.id)
+        return {
+            "message": "Project selected",
+            "project": {
+                "name": payload.project_name,
+                "current_step": state["current_step"],
+                "completed_tasks": state["completed_tasks"],
+            },
+        }
+
     subscription = db.query(Subscription).filter(Subscription.user_id == user.id).first()
     has_active_subscription = bool(
         subscription

@@ -3,18 +3,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   FileText,
   Globe2,
   Layers,
   Link2,
   ListChecks,
   Loader2,
+  LogOut,
   Pencil,
   Plus,
-  Sparkles,
   Trash2,
-  Upload
+  Upload,
+  UserCircle2
 } from "lucide-react";
 
 import useRequireAuth from "@/lib/useRequireAuth";
@@ -43,6 +43,22 @@ import {
   uploadAdminGlobalSource,
   uploadAdminStageDocument
 } from "@/lib/startup";
+import {
+  createStageDeliverable,
+  deleteStageDeliverable,
+  listStageDeliverables,
+  updateStageDeliverable
+} from "@/lib/deliverables";
+
+const DELIVERABLE_TYPES = [
+  { value: "document", label: "Document" },
+  { value: "pdf", label: "PDF" },
+  { value: "image", label: "Image" },
+  { value: "video", label: "Video" },
+  { value: "github_repository", label: "GitHub Repository" },
+  { value: "url", label: "URL Link" },
+  { value: "text", label: "Text Submission" }
+];
 
 const EMPTY_PHASE = {
   id: null,
@@ -200,6 +216,278 @@ function Panel({ title, description, icon: Icon, children }) {
   );
 }
 
+const inputClassCompact =
+  "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none focus:border-orange-400";
+
+// Admin config UI for stage_deliverables (Backend/app/routes/deliverables.py -
+// see sql/migrations/2026-08-20_01_deliverable_management.sql). Lives inside
+// the Stage form and only shows once a stage has been saved (deliverables
+// need a real stage_id).
+function StageDeliverablesEditor({ stageId }) {
+  const [deliverables, setDeliverables] = useState([]);
+  // Fields are edited locally (draft) and only sent to the API when the
+  // admin clicks that card's Save button - nothing commits on blur, so
+  // there's no invisible "did that actually save?" moment.
+  const [drafts, setDrafts] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [savingId, setSavingId] = useState(null);
+
+  const draftOf = (deliverable) =>
+    drafts[deliverable.id] || {
+      deliverable_name: deliverable.deliverable_name,
+      deliverable_description: deliverable.deliverable_description,
+      deliverable_type: deliverable.deliverable_type,
+      display_order: deliverable.display_order,
+      is_required: deliverable.is_required
+    };
+
+  const setDraftField = (id, field, value) => {
+    setDrafts((previous) => ({
+      ...previous,
+      [id]: { ...draftOf(deliverables.find((item) => item.id === id) || {}), ...previous[id], [field]: value }
+    }));
+  };
+
+  const isDirty = (deliverable) => {
+    const draft = drafts[deliverable.id];
+    if (!draft) return false;
+    return (
+      draft.deliverable_name !== deliverable.deliverable_name ||
+      draft.deliverable_description !== deliverable.deliverable_description ||
+      draft.deliverable_type !== deliverable.deliverable_type ||
+      Number(draft.display_order) !== Number(deliverable.display_order) ||
+      Boolean(draft.is_required) !== Boolean(deliverable.is_required)
+    );
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const data = await listStageDeliverables(stageId);
+        if (!cancelled) setDeliverables(Array.isArray(data) ? data : []);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err?.response?.data?.detail || err?.message || "Unable to load deliverables.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    if (stageId) load();
+    return () => {
+      cancelled = true;
+    };
+  }, [stageId]);
+
+  const saveDeliverable = async (deliverable) => {
+    const draft = draftOf(deliverable);
+    if (!draft.deliverable_name.trim()) {
+      setError("Deliverable name cannot be blank.");
+      return;
+    }
+    setError("");
+    setSavingId(deliverable.id);
+    try {
+      const updated = await updateStageDeliverable(deliverable.id, {
+        deliverable_name: draft.deliverable_name.trim(),
+        deliverable_description: draft.deliverable_description,
+        deliverable_type: draft.deliverable_type,
+        display_order: Number(draft.display_order) || 1,
+        is_required: Boolean(draft.is_required)
+      });
+      setDeliverables((previous) => previous.map((item) => (item.id === deliverable.id ? updated : item)));
+      setDrafts((previous) => {
+        const next = { ...previous };
+        delete next[deliverable.id];
+        return next;
+      });
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.message || "Unable to save deliverable.");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const addDeliverable = async () => {
+    setError("");
+    try {
+      const nextOrder =
+        deliverables.reduce((max, item) => Math.max(max, Number(item.display_order) || 0), 0) + 1;
+      const created = await createStageDeliverable({
+        stage_id: stageId,
+        deliverable_name: "New deliverable",
+        deliverable_description: "",
+        deliverable_type: "document",
+        is_required: true,
+        display_order: nextOrder
+      });
+      setDeliverables((previous) => [...previous, created]);
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.message || "Unable to add deliverable.");
+    }
+  };
+
+  const removeDeliverable = async (deliverable) => {
+    if (!window.confirm(`Delete deliverable "${deliverable.deliverable_name}"?`)) return;
+    setError("");
+    try {
+      await deleteStageDeliverable(deliverable.id);
+      setDeliverables((previous) => previous.filter((item) => item.id !== deliverable.id));
+      setDrafts((previous) => {
+        const next = { ...previous };
+        delete next[deliverable.id];
+        return next;
+      });
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.message || "Unable to delete deliverable.");
+    }
+  };
+
+  if (!stageId) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-500">
+        Save this stage first, then come back here to add its deliverables.
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-black uppercase tracking-wide text-slate-700">Deliverables</p>
+          <p className="text-xs font-semibold text-slate-500">What students must submit to complete this stage.</p>
+        </div>
+
+        <button
+          type="button"
+          onClick={addDeliverable}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3.5 py-2 text-xs font-black text-white"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add Deliverable
+        </button>
+      </div>
+
+      {error ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</div>
+      ) : null}
+
+      {loading ? (
+        <p className="text-sm font-semibold text-slate-500">Loading deliverables...</p>
+      ) : deliverables.length ? (
+        <div className="grid gap-3">
+          {deliverables.map((deliverable) => {
+            const draft = draftOf(deliverable);
+            const dirty = isDirty(deliverable);
+            const isSaving = savingId === deliverable.id;
+
+            return (
+              <div key={deliverable.id} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="grid flex-1 gap-3 sm:grid-cols-2">
+                    <label className="grid gap-1">
+                      <span className="text-[11px] font-black uppercase tracking-wide text-slate-500">Name</span>
+                      <input
+                        value={draft.deliverable_name}
+                        onChange={(event) => setDraftField(deliverable.id, "deliverable_name", event.target.value)}
+                        className={inputClassCompact}
+                        placeholder="Problem Statement"
+                      />
+                    </label>
+
+                    <label className="grid gap-1">
+                      <span className="text-[11px] font-black uppercase tracking-wide text-slate-500">Type</span>
+                      <select
+                        value={draft.deliverable_type}
+                        onChange={(event) => setDraftField(deliverable.id, "deliverable_type", event.target.value)}
+                        className={inputClassCompact}
+                      >
+                        {DELIVERABLE_TYPES.map((type) => (
+                          <option key={type.value} value={type.value}>
+                            {type.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="grid gap-1 sm:col-span-2">
+                      <span className="text-[11px] font-black uppercase tracking-wide text-slate-500">Description</span>
+                      <textarea
+                        value={draft.deliverable_description}
+                        onChange={(event) =>
+                          setDraftField(deliverable.id, "deliverable_description", event.target.value)
+                        }
+                        rows={2}
+                        className={inputClassCompact}
+                        placeholder="Upload validated problem statement"
+                      />
+                    </label>
+
+                    <label className="grid gap-1">
+                      <span className="text-[11px] font-black uppercase tracking-wide text-slate-500">Display Order</span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={draft.display_order}
+                        onChange={(event) => setDraftField(deliverable.id, "display_order", event.target.value)}
+                        className={inputClassCompact}
+                      />
+                    </label>
+
+                    <label className="flex items-center gap-2 self-end pb-1.5">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(draft.is_required)}
+                        onChange={(event) => setDraftField(deliverable.id, "is_required", event.target.checked)}
+                        className="h-4 w-4"
+                      />
+                      <span className="text-xs font-black text-slate-700">Required</span>
+                    </label>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => removeDeliverable(deliverable)}
+                    title="Delete deliverable"
+                    className="rounded-xl border border-rose-200 p-2 text-rose-600 hover:bg-rose-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => saveDeliverable(deliverable)}
+                    disabled={!dirty || isSaving}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-orange-600 px-3.5 py-1.5 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                    {isSaving ? "Saving..." : "Save"}
+                  </button>
+
+                  {dirty && !isSaving ? (
+                    <span className="text-[11px] font-bold text-orange-600">Unsaved changes</span>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-sm font-semibold text-slate-500">No deliverables yet - click "Add Deliverable" to create one.</p>
+      )}
+    </div>
+  );
+}
+
 export default function AdminJourneyPage() {
   useRequireAuth();
 
@@ -208,9 +496,11 @@ export default function AdminJourneyPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 const [mentors, setMentors] = useState([]);
   const [journey, setJourney] = useState([]);
   const [journeys, setJourneys] = useState([]);
+  const [viewJourneyId, setViewJourneyId] = useState("");
   const [journeyForm, setJourneyForm] = useState(EMPTY_JOURNEY);
 
   const [phaseForm, setPhaseForm] = useState(EMPTY_PHASE);
@@ -251,13 +541,19 @@ const [mentors, setMentors] = useState([]);
     [stages]
   );
 
-  const loadJourney = async () => {
+  const loadJourney = async (journeyId) => {
     setLoading(true);
     setError("");
 
     try {
-      const data = await listAdminJourney();
+      const data = await listAdminJourney(journeyId);
       setJourney(Array.isArray(data?.journey) ? data.journey : []);
+      // The backend falls back to the default journey when no id is given —
+      // mirror whatever it actually resolved so the viewer dropdown and the
+      // phase form's journey select agree on what's currently shown.
+      if (data?.journey_id) {
+        setViewJourneyId(String(data.journey_id));
+      }
     } catch (err) {
       setError(
         err?.response?.data?.detail ||
@@ -336,6 +632,28 @@ const [mentors, setMentors] = useState([]);
     setPhaseForm(EMPTY_PHASE);
   };
 
+  // Phase order is unique per journey (journey_id, phase_order), so a form
+  // that always defaults to 1 collides as soon as a journey already has a
+  // phase 1. Look up that journey's existing phases and suggest the next
+  // free order instead of leaving the stale default in place.
+  const suggestNextPhaseOrder = async (journeyId) => {
+    try {
+      const data = await listAdminJourney(journeyId);
+      const existingPhases = Array.isArray(data?.journey) ? data.journey : [];
+      const maxOrder = existingPhases.reduce(
+        (max, phase) => Math.max(max, Number(phase.phase_order) || 0),
+        0
+      );
+      setPhaseForm((previous) =>
+        String(previous.journey_id) === String(journeyId)
+          ? { ...previous, phase_order: maxOrder + 1 }
+          : previous
+      );
+    } catch {
+      // Non-fatal — the admin can still type an order manually.
+    }
+  };
+
   const resetStage = () => {
     setStageForm(EMPTY_STAGE);
   };
@@ -407,7 +725,7 @@ const [mentors, setMentors] = useState([]);
     try {
       await deleteAdminJourney(item.id);
       await loadJourneys();
-      await loadJourney();
+      await loadJourney(String(item.id) === viewJourneyId ? undefined : viewJourneyId);
     } catch (err) {
       setError(
         err?.response?.data?.detail ||
@@ -441,14 +759,15 @@ const [mentors, setMentors] = useState([]);
   : null,
     };
 
-    if (stageForm.id) {
-      await updateAdminJourneyStage(stageForm.id, payload);
-    } else {
-      await createAdminJourneyStage(payload);
-    }
+    const { stage: savedStage } = stageForm.id
+      ? await updateAdminJourneyStage(stageForm.id, payload)
+      : await createAdminJourneyStage(payload);
 
-    setStageForm(EMPTY_STAGE);
-    await loadJourney();
+    // Keep the (now-saved) stage loaded instead of resetting to a blank
+    // form - a brand-new stage has no id until this point, and the
+    // Deliverables editor below needs a real stage_id to do anything.
+    loadStageIntoForm(savedStage);
+    await loadJourney(viewJourneyId);
   } catch (err) {
     setError(
       err?.response?.data?.detail ||
@@ -493,8 +812,12 @@ const savePhase = async (event) => {
       await createAdminJourneyPhase(payload);
     }
 
+    const savedJourneyId = payload.journey_id;
     resetPhase();
-    await loadJourney();
+    // Reload the journey the phase actually belongs to, not whatever the
+    // backend's "effective" default is — otherwise a phase saved onto a
+    // non-default journey never shows up in the list below.
+    await loadJourney(savedJourneyId);
   } catch (err) {
     setError(
       err?.response?.data?.detail ||
@@ -513,18 +836,28 @@ const editPhase = (phase) => {
   });
 };
 
-const editStage = (stage) => {
-  const mentor = mentors.find(
-    (item) => String(item.agent_key || "").trim() === String(stage.mentor_agent_key || "").trim()
-  );
+const loadStageIntoForm = (stage) => {
+  // The stages list embeds mentor_agent_key from a JOIN; a stage row fresh
+  // off create/update (RETURNING *) only has the raw mentor_id column - try
+  // the agent_key match first, then fall back to mentor_id directly, so
+  // neither source loses the selected mentor.
+  const mentorFromAgentKey = stage.mentor_agent_key
+    ? mentors.find((item) => String(item.agent_key || "").trim() === String(stage.mentor_agent_key).trim())
+    : null;
   setStageForm({
     ...EMPTY_STAGE,
     ...stage,
     phase_id: String(stage.phase_id || ""),
-    mentor_id: mentor?.id
-      ? String(mentor.id)
-      : ""
+    mentor_id: mentorFromAgentKey?.id
+      ? String(mentorFromAgentKey.id)
+      : stage.mentor_id
+        ? String(stage.mentor_id)
+        : ""
   });
+};
+
+const editStage = (stage) => {
+  loadStageIntoForm(stage);
 };
 
 const removePhase = async (phase) => {
@@ -540,7 +873,7 @@ const removePhase = async (phase) => {
 
   try {
     await deleteAdminJourneyPhase(phase.id);
-    await loadJourney();
+    await loadJourney(viewJourneyId);
   } catch (err) {
     setError(
       err?.response?.data?.detail ||
@@ -561,7 +894,7 @@ const removeStage = async (stage) => {
 
   try {
     await deleteAdminJourneyStage(stage.id);
-    await loadJourney();
+    await loadJourney(viewJourneyId);
   } catch (err) {
     setError(
       err?.response?.data?.detail ||
@@ -812,31 +1145,39 @@ const removeStage = async (stage) => {
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(255,127,41,0.14),transparent_30%),linear-gradient(135deg,#f8fafc_0%,#ffffff_50%,#fff7ed_100%)] px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-[0_18px_45px_-38px_rgba(15,23,42,0.45)] sm:p-8">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-            <div>
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-2xl font-black tracking-tight text-slate-950">Admin Management Dashboard for Startup</h2>
+
+            <div className="relative">
               <button
                 type="button"
-                onClick={() => router.push("/adminDashboard")}
-                className="mb-4 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-black uppercase tracking-[0.1em] text-slate-600 shadow-sm transition hover:bg-slate-50"
+                onClick={() => setProfileMenuOpen((open) => !open)}
+                aria-haspopup="true"
+                aria-expanded={profileMenuOpen}
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50"
               >
-                <ArrowLeft className="h-3.5 w-3.5" />
-                Back to Admin Console
+                <UserCircle2 className="h-6 w-6" />
               </button>
-              <p className="text-xs font-black uppercase tracking-[0.28em] text-orange-500">Startup Journey Builder</p>
-              <h2 className="mt-2 text-4xl font-black tracking-tight text-slate-950">Create startup phases and stages.</h2>
-              <p className="mt-3 max-w-3xl text-base font-semibold leading-7 text-slate-500">
-                This panel maps directly to the <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm text-slate-700">journey_phases</code>,{" "}
-                <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm text-slate-700">journey_stages</code>,{" "}
-                <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm text-slate-700">stage_documents</code>, and{" "}
-                <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm text-slate-700">knowledge_sources</code> tables that power the Startup
-                Journey workspace. Add phases like Validation or Pitch, add ordered stages under each phase, attach reference documents to a stage,
-                and add global sources that every phase and stage can draw on.
-              </p>
+
+              {profileMenuOpen ? (
+                <>
+                  <div
+                    className="fixed inset-0 z-10"
+                    onClick={() => setProfileMenuOpen(false)}
+                  />
+                  <div className="absolute right-0 top-full z-20 mt-2 w-44 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => setProfileMenuOpen(false)}
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold text-rose-600 transition hover:bg-rose-50"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Logout
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </div>
-            <span className="inline-flex items-center gap-2 self-start rounded-full bg-orange-50 px-4 py-2 text-sm font-black text-orange-700">
-              <Sparkles className="h-4 w-4" />
-              Live database
-            </span>
           </div>
         </header>
 
@@ -979,18 +1320,41 @@ const removeStage = async (stage) => {
   description="Top-level journey steps, ordered by phase_order."
   icon={Layers}
 >
+  <label className="mb-4 grid gap-2">
+    <FieldLabel>Viewing journey</FieldLabel>
+
+    <select
+      value={viewJourneyId}
+      onChange={(event) => loadJourney(event.target.value)}
+      className={inputClass}
+    >
+      {journeys.map((item) => (
+        <option key={item.id} value={item.id}>
+          {item.journey_name}
+          {item.is_default ? " (default)" : ""}
+        </option>
+      ))}
+    </select>
+  </label>
+
   <form onSubmit={savePhase} className="grid gap-4">
     <label className="grid gap-2">
       <FieldLabel>Journey</FieldLabel>
 
       <select
         value={phaseForm.journey_id}
-        onChange={(event) =>
+        onChange={(event) => {
+          const nextJourneyId = event.target.value;
           setPhaseForm((previous) => ({
             ...previous,
-            journey_id: event.target.value
-          }))
-        }
+            journey_id: nextJourneyId
+          }));
+          // Only auto-suggest an order for brand-new phases — editing an
+          // existing phase should never silently overwrite its saved order.
+          if (nextJourneyId && !phaseForm.id) {
+            suggestNextPhaseOrder(nextJourneyId);
+          }
+        }}
         className={inputClass}
       >
         <option value="">Select journey</option>
@@ -1440,6 +1804,10 @@ const removeStage = async (stage) => {
     </div>
   </form>
 
+  <div className="mt-6 border-t border-slate-100 pt-6">
+    <StageDeliverablesEditor stageId={stageForm.id} />
+  </div>
+
   <div className="mt-6 space-y-3 border-t border-slate-100 pt-6">
     {loading ? (
       <p className="text-sm font-semibold text-slate-500">
@@ -1527,11 +1895,17 @@ const removeStage = async (stage) => {
                   <option value="">Select stage</option>
                   {phases.map((phase) => (
                     <optgroup key={phase.id} label={phase.phase_name}>
-                      {(phase.stages || []).map((stage) => (
-                        <option key={stage.id} value={stage.id}>
-                          {stage.stage_name}
+                      {(phase.stages || []).length ? (
+                        phase.stages.map((stage) => (
+                          <option key={stage.id} value={stage.id}>
+                            {stage.stage_name}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="" disabled>
+                          No stages created yet
                         </option>
-                      ))}
+                      )}
                     </optgroup>
                   ))}
                 </select>
