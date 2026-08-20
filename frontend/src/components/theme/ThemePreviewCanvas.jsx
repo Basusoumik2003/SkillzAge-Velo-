@@ -56,7 +56,21 @@ export default function ThemePreviewCanvas({ editor, assetMap, selectedIndex, on
       <span>Delete, Ctrl+D, arrows, Escape</span>
     </div>
     <div ref={canvasRef} tabIndex={0} onPointerMove={moveDrag} onPointerUp={() => setDragging(null)} onPointerCancel={() => setDragging(null)} className="relative h-[440px] overflow-hidden rounded-xl border border-slate-700 bg-slate-950 text-white outline-none ring-orange-400 focus:ring-2" style={guideStyle}>
-      <div className="absolute inset-x-4 top-4 h-16 rounded-lg border border-white/10 bg-slate-900/95 px-5 py-5 text-xs font-black tracking-wide"><span className="text-white">InternzBee navbar</span><span className="float-right text-slate-400">HOME PROJECT DASHBOARD PROFILE</span></div>
+      <div className="absolute inset-x-4 top-4 h-16 rounded-lg border border-white/10 bg-slate-900/95 px-4 py-3 text-xs font-black tracking-wide">
+        <div className="flex h-full items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <img
+              src="/skillzage-logo.jpg"
+              alt="Skillzage logo"
+              className="h-9 w-9 rounded-lg bg-white object-cover shadow-[0_10px_24px_-18px_rgba(255,255,255,0.8)]"
+            />
+            <span className="text-sm font-black tracking-[0.18em] text-white uppercase">
+              Skillzage
+            </span>
+          </div>
+          <span className="text-slate-400">HOME PROJECT DASHBOARD PROFILE</span>
+        </div>
+      </div>
       <div className="absolute inset-x-0 bottom-16 top-24 bg-gradient-to-br from-slate-800 via-slate-700 to-slate-950 opacity-80" />
       <div className="absolute left-1/2 top-40 w-[58%] -translate-x-1/2 text-center"><div className="text-xl font-black">Page content remains protected</div><div className="mt-3 inline-flex rounded-lg bg-orange-500 px-4 py-2 text-xs font-black">Primary action</div></div>
       <div className="absolute bottom-4 left-4 right-4 h-10 rounded-lg border border-white/10 bg-slate-900/90 pt-3 text-center text-[10px] font-bold text-slate-400">Footer preview</div>

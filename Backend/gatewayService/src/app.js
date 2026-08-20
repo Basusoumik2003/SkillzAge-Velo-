@@ -32,7 +32,10 @@ app.get("/health", (_req, res) => {
 
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-const authProxy = createProxyHandler({ targetBaseUrl: config.services.auth });
+const authProxy = createProxyHandler({
+  targetBaseUrl: config.services.auth,
+  rewritePath: (originalUrl) => originalUrl.replace(/^\/auth(?=\/|$)/, "/api/auth")
+});
 const pythonProxy = createProxyHandler({ targetBaseUrl: config.services.python });
 app.use("/auth", authProxy);
 app.use("/chat", pythonProxy);

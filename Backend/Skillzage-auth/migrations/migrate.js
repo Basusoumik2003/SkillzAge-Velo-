@@ -9,7 +9,7 @@
  *   node migrations/migrate.js up      Apply all pending migrations
  *   node migrations/migrate.js down    Roll back the most recently applied migration
  */
-require('dotenv').config();
+require('../src/config/env');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');

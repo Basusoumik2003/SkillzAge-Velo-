@@ -1,32 +1,16 @@
 import axios from "axios";
 
-function resolveDefaultBaseUrl(defaultValue) {
-  const configured = String(process.env.NEXT_PUBLIC_API_BASE_URL || "").trim();
-  if (configured) return configured;
-  return process.env.NODE_ENV === "development" ? defaultValue : "/";
-}
-
-// Default to the gateway service in this repo.
-export const API_BASE_URL = resolveDefaultBaseUrl("http://127.0.0.1:8001");
-export const AUTH_API_BASE_URL = process.env.NEXT_PUBLIC_AUTH_API_BASE_URL || (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8001" : "/");
-export const AUTH_SERVICE_API_BASE_URL =
-  process.env.NEXT_PUBLIC_AUTH_SERVICE_API_BASE_URL || (process.env.NODE_ENV === "development" ? "http://127.0.0.1:5000/api/auth" : "/api/auth");
-export const AUTH_SERVICE_FALLBACK_API_BASE_URL =
-  process.env.NEXT_PUBLIC_AUTH_SERVICE_FALLBACK_API_BASE_URL || "http://127.0.0.1:5000/api/auth";
-export const PROFILE_API_BASE_URL =
-  process.env.NEXT_PUBLIC_PROFILE_API || `${AUTH_API_BASE_URL.replace(/\/+$/, "")}/api/profile`;
-export const DASHBOARD_API_BASE_URL =
-  process.env.NEXT_PUBLIC_DASHBOARD_API || `${API_BASE_URL.replace(/\/+$/, "")}/api/dashboard`;
-export const PAYMENT_API_BASE_URL =
-  process.env.NEXT_PUBLIC_PAYMENT_API || `${API_BASE_URL.replace(/\/+$/, "")}/api/payment`;
-export const ADMIN_API_BASE_URL =
-  process.env.NEXT_PUBLIC_ADMIN_API || `${API_BASE_URL.replace(/\/+$/, "")}/api/admin`;
-export const STARTUP_API_BASE_URL =
-  process.env.NEXT_PUBLIC_STARTUP_API || `${API_BASE_URL.replace(/\/+$/, "")}/api/startup`;
-export const INVOICE_API_BASE_URL =
-  process.env.NEXT_PUBLIC_INVOICE_API || `${API_BASE_URL.replace(/\/+$/, "")}/api/invoices`;
-export const CONTACT_API_BASE_URL =
-  process.env.NEXT_PUBLIC_CONTACT_API || `${API_BASE_URL.replace(/\/+$/, "")}/api/contact`;
+export const API_BASE_URL = "";
+export const AUTH_API_BASE_URL = process.env.NEXT_PUBLIC_AUTH_API_BASE_URL || "";
+export const AUTH_SERVICE_API_BASE_URL = process.env.NEXT_PUBLIC_AUTH_SERVICE_API_BASE_URL || "/api/auth";
+export const AUTH_SERVICE_FALLBACK_API_BASE_URL = process.env.NEXT_PUBLIC_AUTH_SERVICE_FALLBACK_API_BASE_URL || "";
+export const PROFILE_API_BASE_URL = process.env.NEXT_PUBLIC_PROFILE_API || "/api/profile";
+export const DASHBOARD_API_BASE_URL = process.env.NEXT_PUBLIC_DASHBOARD_API || "/api/dashboard";
+export const PAYMENT_API_BASE_URL = process.env.NEXT_PUBLIC_PAYMENT_API || "/api/payment";
+export const ADMIN_API_BASE_URL = process.env.NEXT_PUBLIC_ADMIN_API || "/api/admin";
+export const STARTUP_API_BASE_URL = process.env.NEXT_PUBLIC_STARTUP_API || "/api/startup";
+export const INVOICE_API_BASE_URL = process.env.NEXT_PUBLIC_INVOICE_API || "/api/invoices";
+export const CONTACT_API_BASE_URL = process.env.NEXT_PUBLIC_CONTACT_API || "/api/contact";
 
 const api = axios.create({
   baseURL: API_BASE_URL,

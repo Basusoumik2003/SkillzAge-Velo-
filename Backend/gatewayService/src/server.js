@@ -1,6 +1,6 @@
 import app from "./app.js";
 import { config } from "./config.js";
-import { pool } from "./db.js";
+import { ensureDatabaseExists, pool } from "./db.js";
 import { createLogger } from "../../shared/nodeLogger.js";
 
 const logger = createLogger("gatewayService");
@@ -16,7 +16,16 @@ process.on("uncaughtException", (error) => {
 
 async function start() {
   try {
-    await pool.query("SELECT 1");
+    try {
+      await pool.query("SELECT 1");
+    } catch (error) {
+      if (error?.code === "3D000") {
+        await ensureDatabaseExists(config.databaseUrl, logger);
+        await pool.query("SELECT 1");
+      } else {
+        throw error;
+      }
+    }
     app.listen(config.port, () => {
       logger.info("service:started", { url: `http://localhost:${config.port}` });
     });

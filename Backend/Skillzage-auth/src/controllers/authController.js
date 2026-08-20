@@ -4,19 +4,97 @@ const { signToken } = require('../utils/jwt');
 
 const SALT_ROUNDS = 10;
 
+function maskSensitive(value) {
+  if (Array.isArray(value)) {
+    return value.map(maskSensitive);
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => {
+        if (['password', 'confirmPassword', 'passwordHash', 'token', 'authorization'].includes(key)) {
+          return [key, '[REDACTED]'];
+        }
+        return [key, maskSensitive(entry)];
+      })
+    );
+  }
+
+  return value;
+}
+
+function logAuth(step, payload) {
+  console.log(`[auth:${step}]`, maskSensitive(payload));
+}
+
+function tokenForUser(user) {
+  return signToken({
+    sub: String(user.id),
+    id: user.id,
+    email: user.email,
+    wix_member_id: user.wix_member_id || null,
+  });
+}
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function normalizeWixPayload(body) {
+  const wixMemberId = String(body.memberId || body.wixMemberId || body.wix_member_id || '').trim();
+  const email = normalizeEmail(body.email);
+  const firstName = String(body.firstName || body.first_name || '').trim();
+  const lastName = String(body.lastName || body.last_name || '').trim();
+  const fallbackName = email ? email.split('@')[0] : '';
+  const fullName = String(body.fullName || body.full_name || body.name || `${firstName} ${lastName}`.trim() || fallbackName).trim();
+
+  return { wixMemberId, email, fullName };
+}
+
 async function signup(req, res, next) {
   try {
-    const { fullName, email, gender, password } = req.body;
+    const { fullName, email, password } = req.body;
+    logAuth('signup:start', {
+      body: req.body,
+      fullName,
+      email,
+      passwordLength: String(password || '').length,
+      headers: {
+        'user-agent': req.headers['user-agent'],
+        origin: req.headers.origin,
+        referer: req.headers.referer,
+      },
+    });
 
     const existingUser = await userModel.findByEmail(email);
+    logAuth('signup:existing-user', {
+      email,
+      found: Boolean(existingUser),
+      existingUser,
+    });
     if (existingUser) {
+      logAuth('signup:duplicate-email', { email, existingUser });
       return res.status(409).json({ success: false, message: 'Email is already registered' });
     }
 
+    logAuth('signup:creating-user', {
+      fullName,
+      email,
+      passwordLength: String(password || '').length,
+    });
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-    const user = await userModel.createUser({ fullName, email, gender, passwordHash });
-
-    const token = signToken({ sub: String(user.id), id: user.id, email: user.email });
+    logAuth('signup:password-hashed', {
+      email,
+      hashLength: String(passwordHash || '').length,
+    });
+    const user = await userModel.createUser({ fullName, email, passwordHash });
+    logAuth('signup:user-created', { email, user });
+    const token = tokenForUser(user);
+    logAuth('signup:token-created', {
+      email,
+      userId: user && user.id,
+      tokenLength: String(token || '').length,
+    });
 
     return res.status(201).json({
       success: true,
@@ -24,6 +102,11 @@ async function signup(req, res, next) {
       data: { user, token },
     });
   } catch (err) {
+    logAuth('signup:error', {
+      message: err.message,
+      stack: err.stack,
+      body: req.body,
+    });
     return next(err);
   }
 }
@@ -31,45 +114,130 @@ async function signup(req, res, next) {
 async function login(req, res, next) {
   try {
     const { email, password } = req.body;
-if (process.env.BYPASS_AUTH === 'true') {
-  const token = signToken({ id: 'dev-auth-user', email });
-  return res.status(200).json({
-    success: true,
-    message: 'Login successful',
-    data: {
-      user: {
-        id: 'dev-auth-user',
-        full_name: 'Development User',
-        email,
-        gender: null,
+    logAuth('login:start', {
+      body: req.body,
+      email,
+      passwordLength: String(password || '').length,
+      headers: {
+        'user-agent': req.headers['user-agent'],
+        origin: req.headers.origin,
+        referer: req.headers.referer,
       },
-      token,
-    },
-  });
-}
-    const user = await userModel.findByEmail(email);
+      bypassAuth: process.env.BYPASS_AUTH,
+    });
+
+    if (process.env.BYPASS_AUTH === 'true') {
+      logAuth('login:bypass-auth-enabled', { email });
+      const normalizedEmail = normalizeEmail(email);
+      logAuth('login:normalized-email', { email, normalizedEmail });
+      let user = await userModel.findByEmail(normalizedEmail);
+      logAuth('login:bypass-existing-user', { normalizedEmail, found: Boolean(user), user });
+
+      if (!user) {
+        logAuth('login:bypass-create-user', { normalizedEmail });
+        user = await userModel.createUser({
+          fullName: 'Development User',
+          email: normalizedEmail,
+          passwordHash: '',
+        });
+        logAuth('login:bypass-user-created', { normalizedEmail, user });
+      }
+
+      const token = tokenForUser(user);
+      logAuth('login:bypass-token-created', {
+        normalizedEmail,
+        userId: user && user.id,
+        tokenLength: String(token || '').length,
+      });
+      return res.status(200).json({
+        success: true,
+        message: 'Login successful',
+        data: { user: userModel.toPublicUser(user), token },
+      });
+    }
+
+    logAuth('login:lookup-user', { email });
+    const user = await userModel.findAuthUserByEmail(email);
+    logAuth('login:user-found', {
+      email,
+      found: Boolean(user),
+      user,
+      hasPasswordHash: Boolean(user && user.password_hash),
+    });
     if (!user) {
+      logAuth('login:user-missing', { email });
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
+    logAuth('login:compare-password', {
+      email,
+      passwordLength: String(password || '').length,
+      hasPasswordHash: Boolean(user.password_hash),
+      hashLength: user.password_hash ? String(user.password_hash).length : 0,
+    });
     const isMatch = await bcrypt.compare(password, user.password_hash);
+    logAuth('login:password-compare-result', { email, isMatch });
     if (!isMatch) {
+      logAuth('login:password-mismatch', { email });
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
-    const token = signToken({ sub: String(user.id), id: user.id, email: user.email });
-
+    const token = tokenForUser(user);
+    logAuth('login:token-created', {
+      email,
+      userId: user && user.id,
+      tokenLength: String(token || '').length,
+    });
     return res.status(200).json({
       success: true,
       message: 'Login successful',
       data: { user: userModel.toPublicUser(user), token },
     });
   } catch (err) {
+    logAuth('login:error', {
+      message: err.message,
+      stack: err.stack,
+      body: req.body,
+    });
     return next(err);
   }
 }
 
-/** Returns the authenticated user's profile. Requires the requireAuth middleware. */
+async function syncWixMember(req, res, next) {
+  try {
+    const { wixMemberId, email, fullName } = normalizeWixPayload(req.body);
+    logAuth('wix-sync:start', {
+      body: req.body,
+      wixMemberId,
+      email,
+      fullName,
+    });
+    const user = await userModel.createOrUpdateWixUser({ wixMemberId, email, fullName });
+    logAuth('wix-sync:user-upserted', { wixMemberId, email, user });
+    const token = tokenForUser(user);
+    logAuth('wix-sync:token-created', {
+      wixMemberId,
+      email,
+      userId: user && user.id,
+      tokenLength: String(token || '').length,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Wix member synced',
+      data: { user, token },
+    });
+  } catch (err) {
+    logAuth('wix-sync:error', {
+      message: err.message,
+      stack: err.stack,
+      body: req.body,
+    });
+    return next(err);
+  }
+}
+
+/** Returns the authenticated user account. Requires the requireAuth middleware. */
 async function me(req, res, next) {
   try {
     const user = await userModel.findById(req.user.id);
@@ -82,4 +250,4 @@ async function me(req, res, next) {
   }
 }
 
-module.exports = { signup, login, me };
+module.exports = { signup, login, syncWixMember, me };

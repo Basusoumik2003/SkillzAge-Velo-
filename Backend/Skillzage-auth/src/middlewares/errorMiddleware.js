@@ -1,12 +1,23 @@
 /** Catches unmatched routes. */
 function notFound(req, res, next) {
+  console.warn('[service:route:not-found]', {
+    method: req.method,
+    path: req.originalUrl,
+    ip: req.ip,
+  });
   res.status(404).json({ success: false, message: `Route not found: ${req.originalUrl}` });
 }
 
-/** Centralized error handler — keep this registered last in app.js. */
+/** Centralized error handler - keep this registered last in app.js. */
 // eslint-disable-next-line no-unused-vars
 function errorHandler(err, req, res, next) {
-  console.error(err);
+  console.error('[service:error]', {
+    method: req && req.method,
+    path: req && req.originalUrl,
+    message: err.message,
+    code: err.code,
+    stack: err.stack,
+  });
 
   // Unique violation (e.g. duplicate email) from PostgreSQL
   if (err.code === '23505') {
