@@ -1,24 +1,20 @@
-FROM node:20
+FROM node:20-alpine
 
 WORKDIR /app
 
-ENV PYTHON_EXECUTABLE=python3
-
 COPY shared ./shared
-COPY app ./app
-COPY scripts ./scripts
-COPY requirements.txt ./requirements.txt
-COPY adminService ./adminService
+COPY adminService/package*.json ./adminService/
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-pip \
-    && rm -rf /var/lib/apt/lists/* \
-    && python3 -m pip install --break-system-packages --no-cache-dir -r /app/requirements.txt
+# The service declares the parent directory as a local package dependency.
+RUN printf '{"name":"internlabs-backend-node-services","version":"1.0.0","private":true}' > package.json \
+    && cd adminService \
+    && npm ci --omit=dev --ignore-scripts
+
+COPY adminService/src ./adminService/src
 
 WORKDIR /app/adminService
 
-RUN npm install
-
+ENV NODE_ENV=production
 EXPOSE 8004
 
 CMD ["npm", "start"]
