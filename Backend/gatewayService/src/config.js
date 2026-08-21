@@ -38,8 +38,9 @@ export const config = {
   ),
   services: {
     auth: process.env.AUTH_SERVICE_URL || "http://127.0.0.1:8002",
-   profile: process.env.PROFILE_SERVICE_URL || "http://127.0.0.1:5002",
+    profile: process.env.PROFILE_SERVICE_URL || "http://127.0.0.1:5002",
     admin: process.env.ADMIN_SERVICE_URL || "http://127.0.0.1:8004",
+    search: process.env.SEARCH_SERVICE_URL || "http://127.0.0.1:8008",
     user: process.env.USER_SERVICE_URL || "http://127.0.0.1:8008",
     contact: process.env.CONTACT_SERVICE_URL || "http://127.0.0.1:8005",
     payment: process.env.PAYMENT_SERVICE_URL || "http://127.0.0.1:8006",

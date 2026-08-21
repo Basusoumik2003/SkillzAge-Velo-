@@ -1,6 +1,6 @@
 import app from "./app.js";
 import { config } from "./config/config.js";
-import { ensureDatabaseExists, pool } from "./config/db.js";
+import { ensureDatabaseExists, ensureThemeSchema, pool } from "./config/db.js";
 import { createLogger } from "../../shared/nodeLogger.js";
 
 const logger = createLogger("adminService");
@@ -26,6 +26,7 @@ async function start() {
         throw error;
       }
     }
+    await ensureThemeSchema();
     app.listen(config.port, () => {
       logger.info("service:started", { url: `http://localhost:${config.port}` });
     });
