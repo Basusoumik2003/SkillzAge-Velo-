@@ -3,6 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import { config } from "./config/config.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import adminAuthRoutes from "./routes/adminAuthRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import startupRoutes from "./routes/startupRoutes.js";
 import themeRoutes from "./routes/themeRoutes.js";
@@ -36,6 +37,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api", adminRoutes);
+app.use("/api", adminAuthRoutes);
 app.use("/api", dashboardRoutes);
 app.use("/api", startupRoutes);
 app.use("/api", themeRoutes);

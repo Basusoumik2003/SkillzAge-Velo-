@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   FileText,
   Globe2,
@@ -489,9 +489,43 @@ function StageDeliverablesEditor({ stageId }) {
 }
 
 export default function AdminJourneyPage() {
-  useRequireAuth();
-
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // =====================================================
+  // RECEIVE ADMIN TOKEN FROM WIX PRODUCTS PAGE
+  // =====================================================
+  useEffect(() => {
+    try {
+      const adminToken = String(
+        searchParams?.get("adminToken") || ""
+      ).trim();
+
+      if (!adminToken) return;
+
+      window.localStorage.setItem(
+        "skillzage_admin_token",
+        adminToken
+      );
+
+      // Keep the existing Next.js auth guard compatible too.
+      window.localStorage.setItem(
+        "internlabs_admin_token",
+        adminToken
+      );
+
+      console.log(
+        "[ADMIN AUTH] Admin token received from URL and stored."
+      );
+    } catch (error) {
+      console.error(
+        "[ADMIN AUTH] Failed to store admin token:",
+        error
+      );
+    }
+  }, [searchParams]);
+
+  useRequireAuth();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

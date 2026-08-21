@@ -2424,26 +2424,41 @@ export default function useWorkspaceController() {
   const promptActiveStageKey = currentStageKey;
   const storedUser = storedUserState;
   const storedProfile = storedProfileState;
-  const studentName = useMemo(() => {
+ const studentName = useMemo(() => {
+
     const name = String(
-      storedProfile?.full_name ||
-      storedUser?.full_name ||
-      storedUser?.name ||
-      storedUser?.email?.split("@")?.[0] ||
-      ""
+        storedProfile?.full_name ||
+        storedUser?.full_name ||
+        storedUser?.name ||
+        storedProfile?.email?.split("@")?.[0] ||
+        storedUser?.email?.split("@")?.[0] ||
+        ""
     ).trim();
+
     return name || "there";
-  }, [storedProfile, storedUser]);
-  const studentAvatarUrl = useMemo(() => {
+
+}, [storedProfile, storedUser]);
+const studentAvatarUrl = useMemo(() => {
+
     const avatar =
-      storedProfile?.avatar_url ||
-      storedProfile?.profile_image_url ||
-      storedUser?.avatar_url ||
-      storedUser?.profile_image_url ||
-      profileAvatarUrl ||
-      "";
+        storedProfile?.avatar_url ||
+        storedProfile?.profile_image_url ||
+        storedProfile?.profile_picture ||
+        storedProfile?.image_url ||
+        storedUser?.avatar_url ||
+        storedUser?.profile_image_url ||
+        storedUser?.profile_picture ||
+        storedUser?.image_url ||
+        profileAvatarUrl ||
+        "";
+
     return resolveAuthAssetUrl(avatar);
-  }, [profileAvatarUrl, storedProfile, storedUser]);
+
+}, [
+    profileAvatarUrl,
+    storedProfile,
+    storedUser
+]);
   const stageAgentLabel = stageAgentName(activeStageMentor, activeStageAgentKey);
   const stageDisplayAgentLabel = displayStageAgentName(
     stageAgentLabel,

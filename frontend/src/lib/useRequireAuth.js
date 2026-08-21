@@ -3,24 +3,53 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-// Not part of the exported InternzBee source; added only so the (out of
-// scope) adminDashboard page resolves at build time. Minimal client-side
-// gate: redirects to /login when no admin token is present.
 export default function useRequireAuth() {
   const router = useRouter();
+
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     try {
-      const token = window.localStorage.getItem("internlabs_admin_token") || window.localStorage.getItem("internlabs_token");
+      // =====================================================
+      // ADMIN AUTH TOKEN
+      // Use ONLY skillzage_admin_token
+      // =====================================================
+
+      const token = window.localStorage.getItem(
+        "skillzage_admin_token"
+      );
+
+      // =====================================================
+      // NO ADMIN TOKEN
+      // =====================================================
+
       if (!token) {
+        console.log(
+          "[ADMIN AUTH] No admin token found. Redirecting to login."
+        );
+
         router.replace("/login");
         return;
       }
-    } catch {
-      // ignore storage access errors
+
+      // =====================================================
+      // ADMIN TOKEN FOUND
+      // =====================================================
+
+      console.log(
+        "[ADMIN AUTH] skillzage_admin_token found."
+      );
+
+      setReady(true);
+
+    } catch (error) {
+      console.error(
+        "[ADMIN AUTH] Failed to read admin token:",
+        error
+      );
+
+      router.replace("/login");
     }
-    setReady(true);
   }, [router]);
 
   return { ready };

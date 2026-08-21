@@ -9,7 +9,7 @@ import { uploadToS3 } from "../services/s3Service.js";
 import { runWebSearchBatch, questionNeedsWebSearch } from "../services/webSearchService.js";
 import { extractTextFromFile, extractTextFromUrl } from "../utils/textExtraction.js";
 import { parseMultipartFormData } from "../utils/multipart.js";
-
+import { requireAdmin } from "../middleware/requireAdmin.js";
 const router = express.Router();
 
 let startupMentorSchemaReady = null;
@@ -722,6 +722,37 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
   }
 });
 
+router.get(
+  "/startup/journeys/public",
+  async (req, res, next) => {
+    try {
+      const result = await pool.query(
+        `
+        SELECT
+          id,
+          journey_key,
+          journey_name,
+          journey_description,
+          journey_objective,
+          intended_audience,
+          is_active
+        FROM journeys
+        WHERE is_active = TRUE
+        ORDER BY
+          journey_name ASC,
+          id ASC
+        `
+      );
+
+      res.json({
+        journeys: result.rows
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 router.get("/startup/profile", requireAuth, async (req, res, next) => {
   try {
     const profile = await getCurrentProfile(req.auth.userId);
@@ -1055,7 +1086,7 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
   }
 });
 
-router.get("/admin/startup/journeys", requireAuth, async (req, res, next) => {
+router.get("/admin/startup/journeys", requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const result = await pool.query(
       "SELECT * FROM journeys ORDER BY journey_name ASC, id ASC"
@@ -1067,7 +1098,7 @@ router.get("/admin/startup/journeys", requireAuth, async (req, res, next) => {
   }
 });
 
-router.post("/admin/startup/journeys", requireAuth, async (req, res, next) => {
+router.post("/admin/startup/journeys", requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const {
       journey_key,
@@ -1113,7 +1144,7 @@ router.post("/admin/startup/journeys", requireAuth, async (req, res, next) => {
   }
 });
 
-router.put("/admin/startup/journeys/:id", requireAuth, async (req, res, next) => {
+router.put("/admin/startup/journeys/:id", requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const result = await pool.query(
       `UPDATE journeys
@@ -1147,7 +1178,7 @@ router.put("/admin/startup/journeys/:id", requireAuth, async (req, res, next) =>
   }
 });
 
-router.delete("/admin/startup/journeys/:id", requireAuth, async (req, res, next) => {
+router.delete("/admin/startup/journeys/:id", requireAuth, requireAdmin, async (req, res, next) => {
   try {
     const result = await pool.query(
       "DELETE FROM journeys WHERE id = $1 RETURNING id",
