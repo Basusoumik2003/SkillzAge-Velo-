@@ -1,11 +1,4 @@
--- Migration: 2026-08-20_01_deliverable_management
--- Description: Adds the Deliverable Management System - admin-configured
--- deliverables per stage (stage_deliverables), student submissions against
--- them (student_deliverable_submissions), S3-backed file attachments
--- (submission_files), and AI/mentor review records (deliverable_reviews).
--- Purely additive - no existing table, column, or constraint is touched.
 
--- +up
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS stage_deliverables (

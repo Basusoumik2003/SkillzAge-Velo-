@@ -1,15 +1,10 @@
 ﻿-- =====================================================================
 -- Migration: 2026-04-28_user_profiles_and_login_code_purpose.sql
 -- =====================================================================
--- Migration: add user_profiles table + login_codes.purpose column
+-- Migration: add user_profiles table
 -- Date: 2026-04-28
 
 BEGIN;
-
-ALTER TABLE login_codes
-  ADD COLUMN IF NOT EXISTS purpose VARCHAR(30) NOT NULL DEFAULT 'login';
-
-CREATE INDEX IF NOT EXISTS ix_login_codes_email_purpose ON login_codes(email, purpose);
 
 CREATE TABLE IF NOT EXISTS user_profiles (
   id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -1014,10 +1009,6 @@ INSERT INTO project_document_links (company_id, project_id, document_id, link_ty
 SELECT company_id, project_id, id, 'owner', NOW(), NOW()
 FROM project_documents
 ON CONFLICT (project_id, document_id) DO NOTHING;
-
-ALTER TABLE agent_document_access
-  DROP CONSTRAINT IF EXISTS uq_agent_document_access_mentor_document;
-
 CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_document_access_mentor_project_document
   ON agent_document_access(mentor_id, project_id, document_id);
 
@@ -1332,17 +1323,6 @@ ALTER TABLE projects
 
 CREATE INDEX IF NOT EXISTS ix_projects_global_category
   ON projects(global_category);
-
-DROP INDEX IF EXISTS ix_global_documents_company_category_status;
-DROP INDEX IF EXISTS ix_global_documents_company_category_type;
-DROP INDEX IF EXISTS ix_global_documents_company_hash;
-DROP INDEX IF EXISTS ix_global_document_chunks_company_category;
-
-ALTER TABLE IF EXISTS global_document_chunks
-  DROP COLUMN IF EXISTS company_id CASCADE;
-
-ALTER TABLE IF EXISTS global_documents
-  DROP COLUMN IF EXISTS company_id CASCADE;
 
 CREATE TABLE IF NOT EXISTS global_documents (
   id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -1850,43 +1830,29 @@ COMMIT;
 -- Migration: 2026-07-28_01_add_law_global_category.sql
 -- =====================================================================
 ALTER TABLE IF EXISTS global_documents
-  DROP CONSTRAINT IF EXISTS chk_global_documents_category;
-ALTER TABLE IF EXISTS global_documents
   ADD CONSTRAINT chk_global_documents_category
   CHECK (global_category IN ('business_commerce', 'technology_engineering', 'science_research', 'human_social_science', 'media_communication', 'law'));
 
-ALTER TABLE IF EXISTS global_document_chunks
-  DROP CONSTRAINT IF EXISTS chk_global_document_chunks_category;
 ALTER TABLE IF EXISTS global_document_chunks
   ADD CONSTRAINT chk_global_document_chunks_category
   CHECK (global_category IN ('business_commerce', 'technology_engineering', 'science_research', 'human_social_science', 'media_communication', 'law'));
 
 ALTER TABLE IF EXISTS project_global_document_access_settings
-  DROP CONSTRAINT IF EXISTS chk_project_global_document_access_settings_category;
-ALTER TABLE IF EXISTS project_global_document_access_settings
   ADD CONSTRAINT chk_project_global_document_access_settings_category
   CHECK (global_category IN ('business_commerce', 'technology_engineering', 'science_research', 'human_social_science', 'media_communication', 'law'));
 
-ALTER TABLE IF EXISTS project_global_document_access
-  DROP CONSTRAINT IF EXISTS chk_project_global_document_access_category;
 ALTER TABLE IF EXISTS project_global_document_access
   ADD CONSTRAINT chk_project_global_document_access_category
   CHECK (global_category IN ('business_commerce', 'technology_engineering', 'science_research', 'human_social_science', 'media_communication', 'law'));
 
 ALTER TABLE IF EXISTS global_category_document_access_settings
-  DROP CONSTRAINT IF EXISTS chk_global_category_document_access_settings_category;
-ALTER TABLE IF EXISTS global_category_document_access_settings
   ADD CONSTRAINT chk_global_category_document_access_settings_category
   CHECK (global_category IN ('business_commerce', 'technology_engineering', 'science_research', 'human_social_science', 'media_communication', 'law'));
 
 ALTER TABLE IF EXISTS global_category_document_access
-  DROP CONSTRAINT IF EXISTS chk_global_category_document_access_category;
-ALTER TABLE IF EXISTS global_category_document_access
   ADD CONSTRAINT chk_global_category_document_access_category
   CHECK (global_category IN ('business_commerce', 'technology_engineering', 'science_research', 'human_social_science', 'media_communication', 'law'));
 
-ALTER TABLE IF EXISTS project_category_icons
-  DROP CONSTRAINT IF EXISTS chk_project_category_icons_category;
 ALTER TABLE IF EXISTS project_category_icons
   ADD CONSTRAINT chk_project_category_icons_category
   CHECK (global_category IN ('business_commerce', 'technology_engineering', 'science_research', 'human_social_science', 'media_communication', 'law'));
@@ -1936,17 +1902,11 @@ CREATE INDEX IF NOT EXISTS ix_theme_decorations_slot_page ON theme_decorations(t
 
 CREATE OR REPLACE FUNCTION set_theme_decoration_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$ LANGUAGE plpgsql;
-DROP TRIGGER IF EXISTS theme_decorations_set_updated_at ON theme_decorations;
 CREATE TRIGGER theme_decorations_set_updated_at BEFORE UPDATE ON theme_decorations FOR EACH ROW EXECUTE FUNCTION set_theme_decoration_updated_at();
 
 COMMIT;
 
 -- Rollback (run separately):
--- DROP TRIGGER IF EXISTS theme_decorations_set_updated_at ON theme_decorations;
--- DROP FUNCTION IF EXISTS set_theme_decoration_updated_at();
--- ALTER TABLE theme_decorations DROP COLUMN IF EXISTS updated_at, DROP COLUMN IF EXISTS mobile_visible, DROP COLUMN IF EXISTS tablet_visible, DROP COLUMN IF EXISTS desktop_visible, DROP COLUMN IF EXISTS offset_y, DROP COLUMN IF EXISTS offset_x, DROP COLUMN IF EXISTS placement_slot, DROP COLUMN IF EXISTS asset_id;
--- ALTER TABLE theme_assets DROP COLUMN IF EXISTS asset_id;
--- DROP TABLE IF EXISTS theme_asset_library;
 
 -- =====================================================================
 -- Migration: 2026-08-02_01_visual_theme_cms.sql
@@ -1957,11 +1917,9 @@ ALTER TABLE themes ADD COLUMN IF NOT EXISTS category VARCHAR(80) NOT NULL DEFAUL
 ALTER TABLE themes ADD COLUMN IF NOT EXISTS thumbnail_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE themes ADD COLUMN IF NOT EXISTS tokens JSONB NOT NULL DEFAULT '{}'::jsonb;
 
-ALTER TABLE themes DROP CONSTRAINT IF EXISTS chk_themes_status;
 ALTER TABLE themes ADD CONSTRAINT chk_themes_status CHECK (status IN ('draft', 'scheduled', 'published', 'archived'));
 
 ALTER TABLE theme_asset_library ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
-ALTER TABLE theme_asset_library DROP CONSTRAINT IF EXISTS chk_theme_asset_library_type;
 ALTER TABLE theme_asset_library ADD CONSTRAINT chk_theme_asset_library_type CHECK (asset_type IN ('banner','decoration','logo','background','icon','animation','image'));
 
 CREATE INDEX IF NOT EXISTS ix_theme_asset_library_tags ON theme_asset_library USING GIN(tags);
@@ -1969,11 +1927,6 @@ CREATE INDEX IF NOT EXISTS ix_theme_asset_library_tags ON theme_asset_library US
 COMMIT;
 
 -- Rollback (run separately):
--- DROP INDEX IF EXISTS ix_theme_asset_library_tags;
--- ALTER TABLE theme_asset_library DROP COLUMN IF EXISTS tags;
--- ALTER TABLE themes DROP COLUMN IF EXISTS tokens, DROP COLUMN IF EXISTS thumbnail_url, DROP COLUMN IF EXISTS category;
--- ALTER TABLE themes DROP CONSTRAINT IF EXISTS chk_themes_status;
--- ALTER TABLE themes ADD CONSTRAINT chk_themes_status CHECK (status IN ('draft', 'published', 'archived'));
 
 -- =====================================================================
 -- Migration: 2026-08-03_01_theme_decoration_animations.sql
@@ -1985,14 +1938,11 @@ ALTER TABLE theme_decorations ADD COLUMN IF NOT EXISTS animation_duration_ms INT
 ALTER TABLE theme_decorations ADD COLUMN IF NOT EXISTS animation_amplitude INTEGER NOT NULL DEFAULT 10;
 ALTER TABLE theme_decorations ADD COLUMN IF NOT EXISTS blend_light_background BOOLEAN NOT NULL DEFAULT FALSE;
 
-ALTER TABLE theme_decorations DROP CONSTRAINT IF EXISTS chk_theme_decorations_animation_type;
 ALTER TABLE theme_decorations ADD CONSTRAINT chk_theme_decorations_animation_type CHECK (animation_type IN ('none', 'pendulum'));
 
 COMMIT;
 
 -- Rollback (run separately):
--- ALTER TABLE theme_decorations DROP CONSTRAINT IF EXISTS chk_theme_decorations_animation_type;
--- ALTER TABLE theme_decorations DROP COLUMN IF EXISTS blend_light_background, DROP COLUMN IF EXISTS animation_amplitude, DROP COLUMN IF EXISTS animation_duration_ms, DROP COLUMN IF EXISTS animation_type;
 
 
 -- =====================================================================
@@ -2316,21 +2266,6 @@ CREATE TABLE IF NOT EXISTS web_search_results (
 CREATE INDEX IF NOT EXISTS ix_web_search_results_agent_run_id ON web_search_results(agent_run_id);
 CREATE INDEX IF NOT EXISTS ix_web_search_results_query_text ON web_search_results USING GIN (to_tsvector('english', query_text));
 
--- +down
-DROP TABLE IF EXISTS web_search_results;
-DROP TABLE IF EXISTS agent_runs;
-DROP TABLE IF EXISTS student_stage_progress;
-DROP TABLE IF EXISTS memory_summaries;
-DROP TABLE IF EXISTS conversation_messages;
-DROP TABLE IF EXISTS conversation_sessions;
-DROP TABLE IF EXISTS knowledge_chunks;
-DROP TABLE IF EXISTS knowledge_sources;
-DROP TABLE IF EXISTS stage_documents;
-DROP TABLE IF EXISTS journey_stages;
-DROP TABLE IF EXISTS journey_phases;
-DROP TABLE IF EXISTS startup_ideas;
-DROP TABLE IF EXISTS student_profiles;
-
 -- =====================================================================
 -- Migration: 2026-08-14_01_knowledge_sources_storage_columns.sql
 -- =====================================================================
@@ -2345,7 +2280,6 @@ ALTER TABLE knowledge_sources ADD COLUMN IF NOT EXISTS original_filename VARCHAR
 COMMIT;
 
 -- Rollback (run separately):
--- ALTER TABLE knowledge_sources DROP COLUMN IF EXISTS original_filename, DROP COLUMN IF EXISTS storage_public_id, DROP COLUMN IF EXISTS storage_url;
 
 -- =====================================================================
 -- Migration: 2026-08-15_01_rag_embeddings.sql
@@ -2378,8 +2312,6 @@ CREATE INDEX IF NOT EXISTS ix_stage_document_chunks_stage_document_id ON stage_d
 COMMIT;
 
 -- Rollback (run separately):
--- DROP TABLE IF EXISTS stage_document_chunks;
--- ALTER TABLE knowledge_chunks DROP COLUMN IF EXISTS embedding_dimension, DROP COLUMN IF EXISTS embedding;
 
 -- =====================================================================
 -- Migration: 2026-08-15_02_journeys.sql
@@ -2477,9 +2409,6 @@ ALTER TABLE journey_phases ADD COLUMN IF NOT EXISTS default_agent_key VARCHAR(80
 COMMIT;
 
 -- Rollback (run separately):
--- ALTER TABLE journey_phases DROP COLUMN IF EXISTS default_agent_key;
--- ALTER TABLE journey_stages DROP COLUMN IF EXISTS agent_key;
--- DROP TABLE IF EXISTS startup_mentors;
 
 -- =====================================================================
 -- Migration: 2026-08-16_02_users_wix_member_id.sql
@@ -2495,4 +2424,206 @@ ALTER TABLE users
 CREATE UNIQUE INDEX IF NOT EXISTS ix_users_wix_member_id
   ON users(wix_member_id)
   WHERE wix_member_id IS NOT NULL;
+
+-- =====================================================================
+-- Migration: 2026-08-19_01_journey_scoping.sql
+-- =====================================================================
+-- Migration: 2026-08-19_01_journey_scoping
+-- Description: Makes journey_phases (and therefore journey_stages) actually
+-- belong to a specific journeys row, and lets a student be on a specific
+-- journey. Backfills existing data onto one "default" journey so today's
+-- single-journey behavior is unchanged until an admin/student explicitly
+-- creates/picks a second one.
+
+BEGIN;
+
+ALTER TABLE journeys ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE student_profiles
+  ADD COLUMN IF NOT EXISTS journey_id INTEGER REFERENCES journeys(id) ON DELETE SET NULL;
+
+DO $$
+DECLARE
+  default_journey_id INTEGER;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM journeys) THEN
+    INSERT INTO journeys (journey_key, journey_name, is_default)
+    VALUES ('default-journey', 'Startup Journey', TRUE)
+    RETURNING id INTO default_journey_id;
+  ELSIF NOT EXISTS (SELECT 1 FROM journeys WHERE is_default = TRUE) THEN
+    SELECT id INTO default_journey_id FROM journeys ORDER BY id ASC LIMIT 1;
+    UPDATE journeys SET is_default = TRUE WHERE id = default_journey_id;
+  ELSE
+    SELECT id INTO default_journey_id FROM journeys WHERE is_default = TRUE LIMIT 1;
+  END IF;
+
+  UPDATE journey_phases SET journey_id = default_journey_id WHERE journey_id IS NULL;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_journeys_single_default ON journeys(is_default) WHERE is_default = TRUE;
+
+-- phase_order was globally unique (sql/migrations/2026-08-13_01_startup_journey_schema.sql),
+-- so two journeys could never both have a "Phase 1" - scope it per journey instead.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_journey_phases_journey_order ON journey_phases(journey_id, phase_order);
+
+COMMIT;
+
+-- =====================================================================
+-- Migration: 2026-08-20_01_deliverable_management.sql
+-- =====================================================================
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS stage_deliverables (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    stage_id INTEGER NOT NULL
+        REFERENCES journey_stages(id)
+        ON DELETE CASCADE,
+
+    deliverable_name VARCHAR(255) NOT NULL,
+
+    deliverable_description TEXT NOT NULL DEFAULT '',
+
+    deliverable_type VARCHAR(50) NOT NULL DEFAULT 'document',
+
+    is_required BOOLEAN NOT NULL DEFAULT TRUE,
+
+    display_order INTEGER NOT NULL DEFAULT 1,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT uq_stage_deliverable_order
+        UNIQUE(stage_id, display_order),
+
+    CONSTRAINT chk_stage_deliverables_type CHECK (
+        deliverable_type IN (
+            'document', 'pdf', 'image', 'video',
+            'github_repository', 'url', 'text'
+        )
+    )
+);
+
+CREATE INDEX IF NOT EXISTS ix_stage_deliverables_stage_id ON stage_deliverables(stage_id);
+CREATE INDEX IF NOT EXISTS ix_stage_deliverables_stage_order ON stage_deliverables(stage_id, display_order);
+
+CREATE TABLE IF NOT EXISTS student_deliverable_submissions (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    user_id UUID NOT NULL
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+
+    phase_id INTEGER NOT NULL
+        REFERENCES journey_phases(id)
+        ON DELETE CASCADE,
+
+    stage_id INTEGER NOT NULL
+        REFERENCES journey_stages(id)
+        ON DELETE CASCADE,
+
+    deliverable_id INTEGER NOT NULL
+        REFERENCES stage_deliverables(id)
+        ON DELETE CASCADE,
+
+    submission_type VARCHAR(50) NOT NULL DEFAULT 'file',
+
+    submission_text TEXT NOT NULL DEFAULT '',
+
+    status VARCHAR(30) NOT NULL DEFAULT 'submitted',
+
+    attempt_number INTEGER NOT NULL DEFAULT 1,
+
+    submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT chk_student_deliverable_submissions_type CHECK (
+        submission_type IN ('file', 'text', 'github_repository', 'url')
+    ),
+
+    CONSTRAINT chk_student_deliverable_submissions_status CHECK (
+        status IN (
+            'submitted', 'under_review', 'approved',
+            'rejected', 'resubmission_required'
+        )
+    ),
+
+    CONSTRAINT chk_student_deliverable_submissions_attempt CHECK (attempt_number >= 1)
+);
+
+CREATE INDEX IF NOT EXISTS ix_student_deliverable_submissions_user_id ON student_deliverable_submissions(user_id);
+CREATE INDEX IF NOT EXISTS ix_student_deliverable_submissions_deliverable_id ON student_deliverable_submissions(deliverable_id);
+CREATE INDEX IF NOT EXISTS ix_student_deliverable_submissions_stage_id ON student_deliverable_submissions(stage_id);
+CREATE INDEX IF NOT EXISTS ix_student_deliverable_submissions_status ON student_deliverable_submissions(status);
+-- One "current" submission per (user, deliverable) is the norm for the
+-- workspace UI, but full submission history is kept (resubmissions insert a
+-- new row rather than overwrite) - this index just makes "latest attempt"
+-- lookups cheap, it does not constrain uniqueness.
+CREATE INDEX IF NOT EXISTS ix_student_deliverable_submissions_user_deliverable
+    ON student_deliverable_submissions(user_id, deliverable_id, submitted_at DESC);
+
+CREATE TABLE IF NOT EXISTS submission_files (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    submission_id BIGINT NOT NULL
+        REFERENCES student_deliverable_submissions(id)
+        ON DELETE CASCADE,
+
+    file_name VARCHAR(255) NOT NULL,
+
+    file_type VARCHAR(50) NOT NULL DEFAULT '',
+
+    file_size BIGINT NOT NULL DEFAULT 0,
+
+    s3_url TEXT NOT NULL,
+
+    s3_key TEXT NOT NULL,
+
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT chk_submission_files_size CHECK (file_size >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS ix_submission_files_submission_id ON submission_files(submission_id);
+
+CREATE TABLE IF NOT EXISTS deliverable_reviews (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    submission_id BIGINT NOT NULL
+        REFERENCES student_deliverable_submissions(id)
+        ON DELETE CASCADE,
+
+    reviewer_type VARCHAR(20) NOT NULL,
+
+    score INTEGER NOT NULL DEFAULT 0,
+
+    review_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+
+    feedback TEXT NOT NULL DEFAULT '',
+
+    reviewed_by UUID
+        REFERENCES users(id)
+        ON DELETE SET NULL,
+
+    reviewed_at TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT chk_deliverable_reviews_reviewer_type CHECK (reviewer_type IN ('ai', 'mentor')),
+
+    CONSTRAINT chk_deliverable_reviews_status CHECK (
+        review_status IN ('pending', 'approved', 'rejected', 'resubmission_required')
+    ),
+
+    CONSTRAINT chk_deliverable_reviews_score CHECK (score >= 0 AND score <= 100)
+);
+
+CREATE INDEX IF NOT EXISTS ix_deliverable_reviews_submission_id ON deliverable_reviews(submission_id);
+CREATE INDEX IF NOT EXISTS ix_deliverable_reviews_reviewer_type ON deliverable_reviews(reviewer_type);
+CREATE INDEX IF NOT EXISTS ix_deliverable_reviews_status ON deliverable_reviews(review_status);
+
+COMMIT;
 

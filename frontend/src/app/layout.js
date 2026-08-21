@@ -9,12 +9,12 @@ import CookieConsent from "@/components/CookieConsent";
 import ThemeProvider from "@/components/theme/ThemeProvider";
 
 export const metadata = {
-  title: "InternzBee",
+  title: "Skillzage",
   description: "AI mentor workflow for internship-style project building.",
   icons: {
-    icon: [{ url: "/IZB-icon.png", sizes: "64x64", type: "image/png" }],
-    shortcut: "/IZB-icon.png",
-    apple: [{ url: "/IZB-icon.png", sizes: "192x192", type: "image/png" }],
+    icon: [{ url: "/skillzage-logo.jpg", sizes: "64x64", type: "image/jpeg" }],
+    shortcut: "/skillzage-logo.jpg",
+    apple: [{ url: "/skillzage-logo.jpg", sizes: "192x192", type: "image/jpeg" }],
   },
 };
 
