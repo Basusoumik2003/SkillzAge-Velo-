@@ -14,7 +14,7 @@ GLOBAL_VISIBLE_MENTOR_POLICY = (
 REQUIRED_FIELDS = ("agent_key", "mentor_name", "role", "goal", "backstory")
 
 def _build_llm():
-    # CrewAI 0.80 routes model calls through LiteLLM. LiteLLM needs the
+    # CrewAI 0.203 routes model calls through LiteLLM. LiteLLM needs the
     # provider prefix in the model name, so use CrewAI's LLM wrapper and keep
     # visible mentor runtime pinned to OpenAI.
     from app.core.config import get_settings

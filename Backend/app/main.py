@@ -1,6 +1,15 @@
 import logging
 import time
 import uuid
+import sys
+from pathlib import Path
+
+APP_DIR = Path(__file__).resolve().parent
+BACKEND_DIR = APP_DIR.parent
+if str(BACKEND_DIR) not in sys.path:
+    # Allow `uvicorn main:app` from Backend/app by making the Backend folder
+    # importable as the package root.
+    sys.path.insert(0, str(BACKEND_DIR))
 
 from fastapi import FastAPI
 from fastapi import Request

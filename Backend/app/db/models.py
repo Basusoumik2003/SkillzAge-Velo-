@@ -10,14 +10,16 @@ class User(Base):
     This app does NOT create/migrate this table - id is UUID, and the
     display-name column is physically called `full_name`, aliased here
     as `.name` for the rest of the codebase to keep working unchanged.
-    `resume_text`/`gender`/`password_hash` etc. are intentionally omitted
-    since this service never needs them."""
+    `resume_text` is used by the resume upload flow and mentor context
+    builder; the other auth-only columns are intentionally omitted since
+    this service never needs them."""
 
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, index=True)
     name = Column("full_name", String(150), nullable=False)
     email = Column(String(255), unique=True, nullable=False, index=True)
+    resume_text = Column(Text, default="")
 
     projects = relationship("ProjectProgress", back_populates="user", cascade="all, delete-orphan")
     subscription = relationship("Subscription", back_populates="user", uselist=False, cascade="all, delete-orphan")
