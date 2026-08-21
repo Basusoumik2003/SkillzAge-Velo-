@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import WorkspaceEmptyState from "@/components/workspace-v2/WorkspaceEmptyState";
 
 const SEARCH_SERVICE_URL =
-  process.env.NEXT_PUBLIC_SEARCH_SERVICE_URL || "http://localhost:8008";
+  process.env.NEXT_PUBLIC_SEARCH_SERVICE_URL || "/api/search";
 
 export default function SourcesPanel({
   selectedPointData,
@@ -46,7 +46,7 @@ export default function SourcesPanel({
       setError("");
 
       try {
-        const response = await fetch(`${SEARCH_SERVICE_URL}/search`, {
+        const response = await fetch(SEARCH_SERVICE_URL, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
