@@ -1,4 +1,4 @@
-import pool from "../config/db.js";
+import { pool } from "../config/db.js";
 import { requireAuth } from "./auth.js";
 
 export async function requireAdmin(req, res, next) {

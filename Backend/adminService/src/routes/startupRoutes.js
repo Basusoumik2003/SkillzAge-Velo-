@@ -9,7 +9,7 @@ import { uploadToS3 } from "../services/s3Service.js";
 import { runWebSearchBatch, questionNeedsWebSearch } from "../services/webSearchService.js";
 import { extractTextFromFile, extractTextFromUrl } from "../utils/textExtraction.js";
 import { parseMultipartFormData } from "../utils/multipart.js";
-import { requireAdmin } from "../middleware/requireAdmin.js";
+import { requireAdmin as requireAdminMiddleware } from "../middleware/requireAdmin.js";
 const router = express.Router();
 
 let startupMentorSchemaReady = null;
@@ -221,7 +221,7 @@ function resolveCreatedBy(req) {
   return req.auth?.bypassed ? null : req.auth.userId;
 }
 
-async function requireAdmin(req) {
+async function requireAdminRecord(req) {
   
   if (process.env.BYPASS_ADMIN_AUTH === "true") {
     return { bypassed: true };
@@ -1086,7 +1086,7 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
   }
 });
 
-router.get("/admin/startup/journeys", requireAuth, requireAdmin, async (req, res, next) => {
+router.get("/admin/startup/journeys", requireAuth, requireAdminMiddleware, async (req, res, next) => {
   try {
     const result = await pool.query(
       "SELECT * FROM journeys ORDER BY journey_name ASC, id ASC"
@@ -1098,7 +1098,7 @@ router.get("/admin/startup/journeys", requireAuth, requireAdmin, async (req, res
   }
 });
 
-router.post("/admin/startup/journeys", requireAuth, requireAdmin, async (req, res, next) => {
+router.post("/admin/startup/journeys", requireAuth, requireAdminMiddleware, async (req, res, next) => {
   try {
     const {
       journey_key,
@@ -1144,7 +1144,7 @@ router.post("/admin/startup/journeys", requireAuth, requireAdmin, async (req, re
   }
 });
 
-router.put("/admin/startup/journeys/:id", requireAuth, requireAdmin, async (req, res, next) => {
+router.put("/admin/startup/journeys/:id", requireAuth, requireAdminMiddleware, async (req, res, next) => {
   try {
     const result = await pool.query(
       `UPDATE journeys
@@ -1178,7 +1178,7 @@ router.put("/admin/startup/journeys/:id", requireAuth, requireAdmin, async (req,
   }
 });
 
-router.delete("/admin/startup/journeys/:id", requireAuth, requireAdmin, async (req, res, next) => {
+router.delete("/admin/startup/journeys/:id", requireAuth, requireAdminMiddleware, async (req, res, next) => {
   try {
     const result = await pool.query(
       "DELETE FROM journeys WHERE id = $1 RETURNING id",
@@ -1197,7 +1197,7 @@ router.delete("/admin/startup/journeys/:id", requireAuth, requireAdmin, async (r
 
 router.get("/admin/startup/journey", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const requestedJourneyId = normalizeInteger(req.query?.journey_id || req.query?.journeyId, null);
     const journeyId = requestedJourneyId || (await resolveEffectiveJourneyId(null));
     const journey = await loadJourney({ journeyId });
@@ -1209,7 +1209,7 @@ router.get("/admin/startup/journey", requireAuth, async (req, res, next) => {
 
 router.post("/admin/startup/phases", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const phaseKey = normalizeText(req.body?.phase_key || req.body?.phaseKey, 80);
     const phaseName = normalizeText(req.body?.phase_name || req.body?.phaseName, 160);
     if (!phaseKey || !phaseName) {
@@ -1246,7 +1246,7 @@ router.post("/admin/startup/phases", requireAuth, async (req, res, next) => {
 
 router.put("/admin/startup/phases/:id", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const id = normalizeInteger(req.params.id, null);
     const result = await pool.query(
       `UPDATE journey_phases
@@ -1286,7 +1286,7 @@ router.put("/admin/startup/phases/:id", requireAuth, async (req, res, next) => {
 
 router.delete("/admin/startup/phases/:id", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const id = normalizeInteger(req.params.id, null);
     const result = await pool.query("DELETE FROM journey_phases WHERE id = $1 RETURNING id", [id]);
     if (!result.rows[0]) return res.status(404).json({ detail: "Phase not found." });
@@ -1298,7 +1298,7 @@ router.delete("/admin/startup/phases/:id", requireAuth, async (req, res, next) =
 
 router.post("/admin/startup/stages", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     await ensureStartupMentorSchema();
     const phaseId = normalizeInteger(req.body?.phase_id || req.body?.phaseId, null);
     const stageKey = normalizeText(req.body?.stage_key || req.body?.stageKey, 80);
@@ -1338,7 +1338,7 @@ router.post("/admin/startup/stages", requireAuth, async (req, res, next) => {
 
 router.put("/admin/startup/stages/:id", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     await ensureStartupMentorSchema();
     const id = normalizeInteger(req.params.id, null);
     const result = await pool.query(
@@ -1381,7 +1381,7 @@ router.put("/admin/startup/stages/:id", requireAuth, async (req, res, next) => {
 
 router.delete("/admin/startup/stages/:id", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const id = normalizeInteger(req.params.id, null);
     const result = await pool.query("DELETE FROM journey_stages WHERE id = $1 RETURNING id", [id]);
     if (!result.rows[0]) return res.status(404).json({ detail: "Stage not found." });
@@ -1393,7 +1393,7 @@ router.delete("/admin/startup/stages/:id", requireAuth, async (req, res, next) =
 
 router.get("/admin/startup/mentors", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     await ensureStartupMentorSchema();
     const { rows } = await pool.query("SELECT * FROM startup_mentors ORDER BY is_default DESC, mentor_name ASC");
     await Promise.all(rows.map((mentor) => syncProjectMentorFromStartupMentor(mentor)));
@@ -1405,7 +1405,7 @@ router.get("/admin/startup/mentors", requireAuth, async (req, res, next) => {
 
 router.post("/admin/startup/mentors", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     await ensureStartupMentorSchema();
     const agentKey = normalizeText(req.body?.agent_key || req.body?.agentKey, 80);
     const mentorName = normalizeText(req.body?.mentor_name || req.body?.mentorName, 120);
@@ -1452,7 +1452,7 @@ router.post("/admin/startup/mentors", requireAuth, async (req, res, next) => {
 
 router.put("/admin/startup/mentors/:id", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     await ensureStartupMentorSchema();
     const id = normalizeInteger(req.params.id, null);
     const existingLookup = await pool.query("SELECT agent_key FROM startup_mentors WHERE id = $1 LIMIT 1", [id]);
@@ -1509,7 +1509,7 @@ router.put("/admin/startup/mentors/:id", requireAuth, async (req, res, next) => 
 
 router.delete("/admin/startup/mentors/:id", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     await ensureStartupMentorSchema();
     const id = normalizeInteger(req.params.id, null);
     const mentorLookup = await pool.query("SELECT agent_key FROM startup_mentors WHERE id = $1 LIMIT 1", [id]);
@@ -1527,7 +1527,7 @@ const STAGE_DOCUMENT_SOURCE_TYPES = ["manual", "upload", "url", "seed", "web"];
 
 router.get("/admin/startup/stage-documents", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const stageId = normalizeInteger(req.query?.stage_id, null);
     const phaseId = normalizeInteger(req.query?.phase_id, null);
     const { rows } = await pool.query(
@@ -1551,7 +1551,7 @@ router.get("/admin/startup/stage-documents", requireAuth, async (req, res, next)
 
 router.post("/admin/startup/stage-documents", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const stageId = normalizeInteger(req.body?.stage_id || req.body?.stageId, null);
     const title = normalizeText(req.body?.title, 240);
     if (!stageId) {
@@ -1616,7 +1616,7 @@ router.post(
   express.raw({ type: "multipart/form-data", limit: "25mb" }),
   async (req, res, next) => {
     try {
-      await requireAdmin(req);
+      await requireAdminRecord(req);
       const contentType = String(req.headers["content-type"] || "");
       if (!contentType.includes("multipart/form-data")) {
         return res.status(400).json({ detail: "multipart/form-data request required." });
@@ -1685,7 +1685,7 @@ router.post(
 
 router.put("/admin/startup/stage-documents/:id", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const id = normalizeInteger(req.params.id, null);
     const documentType = STAGE_DOCUMENT_TYPES.includes(req.body?.document_type) ? req.body.document_type : null;
     const sourceType = STAGE_DOCUMENT_SOURCE_TYPES.includes(req.body?.source_type) ? req.body.source_type : null;
@@ -1740,7 +1740,7 @@ router.put("/admin/startup/stage-documents/:id", requireAuth, async (req, res, n
 
 router.delete("/admin/startup/stage-documents/:id", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const id = normalizeInteger(req.params.id, null);
     const result = await pool.query("DELETE FROM stage_documents WHERE id = $1 RETURNING id", [id]);
     if (!result.rows[0]) return res.status(404).json({ detail: "Document not found." });
@@ -1754,7 +1754,7 @@ const KNOWLEDGE_SOURCE_TYPES = ["manual", "upload", "url", "seed", "web"];
 
 router.get("/admin/startup/global-sources", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const { rows } = await pool.query(
       `SELECT ks.id, ks.source_scope, ks.source_type, ks.title, ks.source_url, ks.content_text,
               ks.storage_url, ks.storage_public_id, ks.original_filename,
@@ -1771,7 +1771,7 @@ router.get("/admin/startup/global-sources", requireAuth, async (req, res, next) 
 
 router.post("/admin/startup/global-sources", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const title = normalizeText(req.body?.title, 240);
     if (!title) {
       return res.status(400).json({ detail: "Title is required." });
@@ -1820,7 +1820,7 @@ router.post(
   express.raw({ type: "multipart/form-data", limit: "25mb" }),
   async (req, res, next) => {
     try {
-      await requireAdmin(req);
+      await requireAdminRecord(req);
       const contentType = String(req.headers["content-type"] || "");
       if (!contentType.includes("multipart/form-data")) {
         return res.status(400).json({ detail: "multipart/form-data request required." });
@@ -1877,7 +1877,7 @@ router.post(
 
 router.put("/admin/startup/global-sources/:id", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const id = normalizeInteger(req.params.id, null);
     const sourceType = KNOWLEDGE_SOURCE_TYPES.includes(req.body?.source_type) ? req.body.source_type : null;
 
@@ -1915,7 +1915,7 @@ router.put("/admin/startup/global-sources/:id", requireAuth, async (req, res, ne
 
 router.delete("/admin/startup/global-sources/:id", requireAuth, async (req, res, next) => {
   try {
-    await requireAdmin(req);
+    await requireAdminRecord(req);
     const id = normalizeInteger(req.params.id, null);
     const result = await pool.query(
       "DELETE FROM knowledge_sources WHERE id = $1 AND source_scope = 'global' RETURNING id",

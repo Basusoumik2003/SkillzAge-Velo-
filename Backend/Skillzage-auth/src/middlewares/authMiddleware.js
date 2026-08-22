@@ -1,5 +1,4 @@
-import jwt from "jsonwebtoken";
-import { config } from "../config/config.js";
+const jwt = require("jsonwebtoken");
 
 const UUID_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -8,7 +7,7 @@ const UUID_PATTERN =
 // NORMAL AUTH
 // ======================================================
 
-export function requireAuth(req, res, next) {
+function requireAuth(req, res, next) {
 
     if (
         process.env.BYPASS_ADMIN_AUTH ===
@@ -56,7 +55,7 @@ export function requireAuth(req, res, next) {
             payload =
                 jwt.verify(
                     token,
-                    config.jwtSecretKey,
+                    process.env.JWT_SECRET,
                     {
                         algorithms: ["HS256"]
                     }
@@ -65,7 +64,7 @@ export function requireAuth(req, res, next) {
         } catch (primaryError) {
 
             if (
-                !config.jwtSecretKeyAlt
+                !process.env.JWT_SECRET_ALT
             ) {
                 throw primaryError;
             }
@@ -73,7 +72,7 @@ export function requireAuth(req, res, next) {
             payload =
                 jwt.verify(
                     token,
-                    config.jwtSecretKeyAlt,
+                    process.env.JWT_SECRET_ALT,
                     {
                         algorithms: ["HS256"]
                     }
@@ -148,7 +147,7 @@ export function requireAuth(req, res, next) {
 // ADMIN ONLY
 // ======================================================
 
-export function requireAdmin(
+function requireAdmin(
     req,
     res,
     next
@@ -175,3 +174,7 @@ export function requireAdmin(
 
     return next();
 }
+
+module.exports = requireAuth;
+module.exports.requireAuth = requireAuth;
+module.exports.requireAdmin = requireAdmin;
