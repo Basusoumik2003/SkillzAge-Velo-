@@ -880,11 +880,12 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
   }
 });
 
-router.get("/startup/journeys", requireAuth, async (req, res, next) => {
+router.get("/startup/journeys", async (req, res, next) => {
   try {
     const result = await pool.query(
       "SELECT * FROM journeys WHERE is_active = TRUE ORDER BY is_default DESC, journey_name ASC"
     );
+
     res.json({ journeys: result.rows });
   } catch (error) {
     next(error);
