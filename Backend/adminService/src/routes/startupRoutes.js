@@ -883,7 +883,7 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
 router.get("/startup/journeys", async (req, res, next) => {
   try {
     const result = await pool.query(
-      "SELECT * FROM journeys WHERE is_active = TRUE ORDER BY is_default DESC, journey_name ASC"
+      "SELECT * FROM journeys WHERE is_active = TRUE ORDER BY journey_name ASC, id ASC"
     );
 
     res.json({ journeys: result.rows });
