@@ -1,23 +1,19 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Bell, ChevronDown, LayoutGrid, LogOut, User } from "lucide-react";
+import { Bell, ChevronDown } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
-import { clearAuthSession } from "@/lib/authStorage";
 import { cn } from "@/lib/utils";
 
 export default function MentorHeader({
-  router,
   navbarProjectTitle,
   isDemoProject,
   navbarStageTitle,
@@ -34,30 +30,8 @@ export default function MentorHeader({
   studentName,
   studentAvatarUrl
 }) {
-  const goToWorkspace = () => {
-    router?.push("/workspace");
-  };
-
-  const handleSignOut = () => {
-    try {
-      clearAuthSession();
-    } catch {
-      // ignore
-    }
-    router?.push("/workspace");
-  };
-
   return (
     <header className="sticky top-0 z-30 flex shrink-0 items-center gap-3 border-b border-border bg-card/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/80 sm:px-4">
-      <button
-        type="button"
-        onClick={goToWorkspace}
-        className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border bg-background text-secondary transition hover:border-primary/40 hover:text-primary"
-        aria-label="Back to workspace"
-      >
-        <LayoutGrid className="h-4 w-4" />
-      </button>
-
       <div className="flex min-w-0 items-center gap-2">
         <Avatar className="hidden h-9 w-9 border border-border sm:flex">
           {activeStageMentor?.avatar_url ? <AvatarImage src={activeStageMentor.avatar_url} alt="" /> : null}
@@ -137,17 +111,6 @@ export default function MentorHeader({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuLabel className="truncate">{studentName}</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={goToWorkspace}>
-              <User className="mr-2 h-4 w-4" /> Workspace
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={goToWorkspace}>
-              <LayoutGrid className="mr-2 h-4 w-4" /> Workspace
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleSignOut}>
-              <LogOut className="mr-2 h-4 w-4" /> Sign out
-            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
