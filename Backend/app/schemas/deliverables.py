@@ -109,6 +109,8 @@ class StageDeliverableResponse(BaseModel):
     deliverable_type: DeliverableType
     is_required: bool
     display_order: int
+    template_url: str = ""
+    template_original_filename: str = ""
     created_at: datetime
     updated_at: datetime
 

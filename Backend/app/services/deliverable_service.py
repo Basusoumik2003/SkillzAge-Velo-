@@ -70,6 +70,27 @@ def update_deliverable(db: Session, deliverable_id: int, payload: StageDeliverab
     return repo.update_deliverable(db, deliverable, **fields)
 
 
+def upload_deliverable_template(
+    db: Session, deliverable_id: int, *, file_name: str, data: bytes, content_type: str
+) -> StageDeliverable:
+    """Admin-side upload of the demo/template file students download before
+    filling out this deliverable. Server-side upload (not presigned) since
+    this is a low-frequency admin action, not a student-scale upload path."""
+    deliverable = _require_deliverable(db, deliverable_id)
+    uploaded = s3_service.upload_bytes(
+        folder=f"deliverable-templates/{deliverable_id}",
+        file_name=file_name,
+        data=data,
+        content_type=content_type or "application/octet-stream",
+    )
+    return repo.update_deliverable(
+        db,
+        deliverable,
+        template_url=uploaded["s3_url"],
+        template_original_filename=file_name,
+    )
+
+
 def delete_deliverable(db: Session, deliverable_id: int) -> None:
     deliverable = _require_deliverable(db, deliverable_id)
     repo.delete_deliverable(db, deliverable)

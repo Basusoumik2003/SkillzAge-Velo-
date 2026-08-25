@@ -5,7 +5,6 @@ import { config } from "./config/config.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import startupRoutes from "./routes/startupRoutes.js";
-import themeRoutes from "./routes/themeRoutes.js";
 import { createLogger, logError, requestLogger } from "../../shared/nodeLogger.js";
 
 const app = express();
@@ -38,8 +37,7 @@ app.get("/health", (_req, res) => {
 app.use("/api", adminRoutes);
 app.use("/api", dashboardRoutes);
 app.use("/api", startupRoutes);
-app.use("/api", themeRoutes);
-app.use("/api/admin", themeRoutes);
+
 
 app.use((err, req, res, _next) => {
   logError(logger, err, req);

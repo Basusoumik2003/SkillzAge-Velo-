@@ -29,7 +29,11 @@ export async function runWebSearch(query, { maxResults = 5 } = {}) {
       url: String(row?.url || "").slice(0, 2000),
       snippet: String(row?.content || "").slice(0, 1200),
       rank: index + 1,
-      published_at: row?.published_date || null
+      published_at: row?.published_date || null,
+      // Which of the batch's queries actually produced this result — needed
+      // once results are merged/deduped in runWebSearchBatch, so callers can
+      // still record the real query_text per row (not just the first query).
+      query: cleanQuery
     }));
   } catch {
     return [];
@@ -55,14 +59,31 @@ export async function runWebSearchBatch(queries, { maxResultsPerQuery = 4, maxTo
   return merged;
 }
 
-/** Simple keyword heuristic for whether a question likely needs fresh web info. */
-export function questionNeedsWebSearch(question) {
-  const text = String(question || "").toLowerCase();
-  const triggers = [
-    "latest", "current", "today", "this year", "2025", "2026",
-    "market size", "competitor", "competitors", "funding", "trend", "trending",
-    "news", "recent", "statistics", "stats", "how much does", "price of",
-    "regulation", "law", "compliance"
-  ];
-  return triggers.some((word) => text.includes(word));
+/**
+ * Builds the search queries used the moment a student first enters a stage —
+ * see runStageStartWebSearch() in startupRoutes.js. Deliberately ignores the
+ * student's chat text entirely: the query is built purely from what the
+ * admin configured (stage/phase context + the stage's search_focus field)
+ * plus the student's own idea, so it's identical no matter what they type.
+ */
+export function buildStageStartSearchQueries({ phase, stage, profile }) {
+  const ideaSummary = [profile?.idea_title, profile?.problem_statement, profile?.solution_summary]
+    .filter(Boolean)
+    .join(" — ");
+  const country = profile?.country || "India";
+
+  const queries = [
+    [stage?.stage_name, stage?.search_focus || stage?.stage_objective, ideaSummary || profile?.industry_tags, country]
+      .filter(Boolean)
+      .join(" "),
+    [phase?.phase_name, phase?.phase_objective, profile?.industry_tags, "startup", country]
+      .filter(Boolean)
+      .join(" ")
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  // Two near-identical queries (e.g. a stage with no search_focus and no
+  // phase_objective) waste a search call for the same results — dedupe.
+  return [...new Set(queries)];
 }

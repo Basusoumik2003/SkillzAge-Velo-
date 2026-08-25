@@ -23,6 +23,15 @@ export async function deleteStageDeliverable(deliverableId) {
   await api.delete(`/deliverables/admin/deliverables/${deliverableId}`);
 }
 
+// Admin: upload/replace the demo/template file a student downloads before
+// filling out this deliverable.
+export async function uploadDeliverableTemplate(deliverableId, file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const { data } = await api.post(`/deliverables/admin/deliverables/${deliverableId}/template`, formData);
+  return data;
+}
+
 export async function reorderStageDeliverables(stageId, items) {
   const { data } = await api.post("/deliverables/admin/deliverables/reorder", {
     stage_id: stageId,
