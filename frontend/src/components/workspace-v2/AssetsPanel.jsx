@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { FileText, Image as ImageIcon, LayoutGrid, List, Search, UploadCloud } from "lucide-react";
+import { FileText, FolderOpen, Image as ImageIcon, LayoutGrid, List, Search, UploadCloud } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -58,10 +58,15 @@ export default function AssetsPanel({ stageDocuments = {}, catalogProject, proje
   const filteredRows = rows.filter((row) => (query.trim() ? row.name.toLowerCase().includes(query.trim().toLowerCase()) : true));
 
   return (
-    <div className="flex h-full flex-col overflow-hidden border-l border-border bg-card">
-      <div className="flex flex-col gap-2 border-b border-border p-3">
+    <div className="flex h-full flex-col overflow-hidden bg-card">
+      <div className="flex flex-col gap-2 border-b border-border bg-gradient-to-b from-primary/5 to-transparent p-3">
         <div className="flex items-center justify-between">
-          <p className="text-xs font-semibold uppercase tracking-wide text-secondary">Assets</p>
+          <div className="flex items-center gap-1.5">
+            <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+              <FolderOpen className="h-3 w-3" />
+            </span>
+            <p className="text-xs font-semibold uppercase tracking-wide text-secondary">Assets</p>
+          </div>
           <div className="flex items-center gap-1">
             <button
               type="button"
@@ -119,7 +124,7 @@ export default function AssetsPanel({ stageDocuments = {}, catalogProject, proje
                 target={row.url ? "_blank" : undefined}
                 rel="noreferrer"
                 className={cn(
-                  "flex items-center gap-2 rounded-xl border border-border bg-background p-2.5 text-left shadow-sm transition hover:border-primary/30",
+                  "flex items-center gap-2 rounded-xl border border-border bg-background p-2.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md",
                   !row.url && "pointer-events-none opacity-60"
                 )}
               >

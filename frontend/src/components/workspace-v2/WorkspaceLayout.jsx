@@ -21,6 +21,14 @@ function ResizeHandle() {
   );
 }
 
+function VerticalResizeHandle() {
+  return (
+    <PanelResizeHandle className="group relative h-px shrink-0 bg-border transition-colors hover:bg-primary/40 focus-visible:outline-none">
+      <span className="absolute inset-x-0 -top-1 -bottom-1" />
+    </PanelResizeHandle>
+  );
+}
+
 export default function WorkspaceLayout(controller) {
   const { phaseListOpen, setPhaseListOpen } = controller;
   const phasesPanelRef = useRef(null);
@@ -103,30 +111,36 @@ export default function WorkspaceLayout(controller) {
 
           <ResizeHandle />
 
-          <Panel id="ai-workspace" ref={aiWorkspacePanelRef} order={2} minSize={AI_WORKSPACE_MIN_SIZE} defaultSize={48}>
+          <Panel id="ai-workspace" ref={aiWorkspacePanelRef} order={2} minSize={AI_WORKSPACE_MIN_SIZE} defaultSize={52}>
             <AIWorkspace {...controller} />
           </Panel>
 
           <ResizeHandle />
 
-          <Panel id="sources" order={3} minSize={14} defaultSize={17} maxSize={26} collapsible collapsedSize={0} className="hidden xl:block">
-           <SourcesPanel
-  selectedPointData={controller.selectedPointData}
-  activeStageData={controller.activeStageData}
-  catalogProject={controller.catalogProject}
-  projectName={controller.projectName}
-/>
-          </Panel>
+          <Panel id="research-assets" order={3} minSize={18} defaultSize={22} maxSize={30} collapsible collapsedSize={0} className="hidden xl:block">
+            <div className="flex h-full flex-col overflow-hidden border-l border-border bg-card">
+              <PanelGroup direction="vertical" className="h-full">
+                <Panel id="sources" order={1} minSize={30} defaultSize={55}>
+                  <SourcesPanel
+                    selectedPointData={controller.selectedPointData}
+                    activeStageData={controller.activeStageData}
+                    catalogProject={controller.catalogProject}
+                    projectName={controller.projectName}
+                  />
+                </Panel>
 
-          <ResizeHandle />
+                <VerticalResizeHandle />
 
-          <Panel id="assets" order={4} minSize={14} defaultSize={17} maxSize={26} collapsible collapsedSize={0} className="hidden xl:block">
-            <AssetsPanel
-              stageDocuments={controller.stageDocuments}
-              catalogProject={controller.catalogProject}
-              projectName={controller.projectName}
-              stageProgressKey={controller.stageProgressKey}
-            />
+                <Panel id="assets" order={2} minSize={25} defaultSize={45}>
+                  <AssetsPanel
+                    stageDocuments={controller.stageDocuments}
+                    catalogProject={controller.catalogProject}
+                    projectName={controller.projectName}
+                    stageProgressKey={controller.stageProgressKey}
+                  />
+                </Panel>
+              </PanelGroup>
+            </div>
           </Panel>
         </PanelGroup>
       </div>

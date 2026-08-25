@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ExternalLink, Search } from "lucide-react";
+import { ExternalLink, Globe, Search } from "lucide-react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import WorkspaceEmptyState from "@/components/workspace-v2/WorkspaceEmptyState";
@@ -96,11 +96,16 @@ export default function SourcesPanel({
   });
 
   return (
-    <div className="flex h-full flex-col overflow-hidden border-l border-border bg-card">
-      <div className="flex flex-col gap-2 border-b border-border p-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-secondary">
-          Web Research
-        </p>
+    <div className="flex h-full flex-col overflow-hidden bg-card">
+      <div className="flex flex-col gap-2 border-b border-border bg-gradient-to-b from-primary/5 to-transparent p-3">
+        <div className="flex items-center gap-1.5">
+          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+            <Globe className="h-3 w-3" />
+          </span>
+          <p className="text-xs font-semibold uppercase tracking-wide text-secondary">
+            Web Research
+          </p>
+        </div>
 
         <p className="text-[0.7rem] leading-5 text-secondary">
           Live sources related to the current phase, stage, and idea.
@@ -148,7 +153,7 @@ export default function SourcesPanel({
                     href={result.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="group flex flex-col gap-1 rounded-xl border border-border bg-background p-3 shadow-sm transition hover:border-primary/30 hover:shadow-md"
+                    className="group flex flex-col gap-1 rounded-xl border border-border bg-background p-3 shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
                   >
                     <div className="flex items-center gap-2">
                       {/* eslint-disable-next-line @next/next/no-img-element */}

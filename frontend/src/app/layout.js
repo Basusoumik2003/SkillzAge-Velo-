@@ -3,10 +3,17 @@
 // in older versions) has been dropped here.
 import "./globals.css";
 import { Suspense } from "react";
+import { Inter } from "next/font/google";
 import NavigationLoaderProvider from "@/components/NavigationLoaderProvider";
 import ToastProvider from "@/components/ToastProvider";
 import CookieConsent from "@/components/CookieConsent";
 import ThemeProvider from "@/components/theme/ThemeProvider";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap"
+});
 
 export const metadata = {
   title: "Skillzage",
@@ -20,7 +27,7 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
+    <html lang="en" className={inter.variable}>
       <body className="antialiased">
         <Suspense fallback={null}>
           <NavigationLoaderProvider>
