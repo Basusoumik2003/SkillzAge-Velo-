@@ -77,7 +77,7 @@ export default function LoginPage() {
 
       try {
         const adminResponse = await authServiceApi.post(
-          "/auth/admin/check",
+          "/admin/check",
           {},
           {
             headers: {
@@ -119,7 +119,7 @@ export default function LoginPage() {
         if (adminToken) {
           try {
             window.localStorage.setItem(
-              "internlabs_admin_token",
+              "skillzage_admin_token",
               adminToken
             );
           } catch {
