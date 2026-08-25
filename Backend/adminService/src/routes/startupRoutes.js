@@ -6,7 +6,7 @@ import { chatComplete } from "../services/llmService.js";
 import { summarizeSession } from "../services/memoryService.js";
 import { chunkText, cosineSimilarity, embedText, embedTexts, getEmbeddingModel } from "../services/ragService.js";
 import { uploadToS3 } from "../services/s3Service.js";
-import { runWebSearchBatch, questionNeedsWebSearch } from "../services/webSearchService.js";
+import { runWebSearchBatch, buildStageStartSearchQueries } from "../services/webSearchService.js";
 import { extractTextFromFile, extractTextFromUrl } from "../utils/textExtraction.js";
 import { parseMultipartFormData } from "../utils/multipart.js";
 import { requireAdmin as requireAdminMiddleware } from "../middleware/requireAdmin.js";
@@ -260,7 +260,8 @@ async function fetchPhaseRows({ journeyId = null } = {}) {
 async function fetchStageRows({ journeyId = null } = {}) {
   const { rows } = await pool.query(
     `SELECT js.id, js.phase_id, js.mentor_id, js.stage_key, js.stage_order, js.stage_name, js.stage_context, js.stage_objective,
-            js.expected_outcome, js.readiness_criteria, js.recommended_actions, js.is_active,
+            js.expected_outcome, js.readiness_criteria, js.recommended_actions, js.search_focus,
+            js.requires_deliverables, js.pass_score_threshold, js.is_active,
             sm.agent_key AS mentor_agent_key,
             sm.mentor_name AS mentor_name,
             js.created_by, js.created_at, js.updated_at
@@ -272,6 +273,69 @@ async function fetchStageRows({ journeyId = null } = {}) {
     [journeyId]
   );
   return rows;
+}
+
+/** Which stage_ids this user has a 'completed' row for in student_stage_progress
+ * (Backend/app/services/startup_progress.py owns writing this — deliverable
+ * approval there calls mark_stage_complete when a gated stage's required
+ * deliverables all pass). Node only reads it, to decide stage unlocking. */
+async function fetchCompletedStageIds(userId) {
+  if (!userId) return new Set();
+  const { rows } = await pool.query(
+    "SELECT stage_id FROM student_stage_progress WHERE user_id = $1 AND status = 'completed' AND stage_id IS NOT NULL",
+    [userId]
+  );
+  return new Set(rows.map((row) => row.stage_id));
+}
+
+/**
+ * Walks a nested journey (phases -> stages, in order) and annotates each
+ * stage with is_completed/is_unlocked, then resolves which phase/stage
+ * should be "active" for this student — the first stage that isn't unlocked
+ * yet (or the very last stage, once everything is unlocked).
+ *
+ * Unlock rule: a stage is unlocked once every earlier stage in the whole
+ * journey is either not deliverable-gated (requires_deliverables = false,
+ * the admin's checkbox) or is gated and completed. A stage that isn't
+ * deliverable-gated is always itself "passable" — it just doesn't block
+ * anything after it.
+ */
+function annotateJourneyProgress(journeyPhases, completedStageIds) {
+  let blocked = false;
+  let resolvedActivePhase = null;
+  let resolvedActiveStage = null;
+
+  const annotatedPhases = journeyPhases.map((phase) => ({
+    ...phase,
+    stages: (phase.stages || []).map((stage) => {
+      const isGated = Boolean(stage.requires_deliverables);
+      const isCompleted = completedStageIds.has(stage.id);
+      const isUnlocked = !blocked;
+
+      if (isUnlocked && resolvedActiveStage === null) {
+        resolvedActivePhase = phase;
+        resolvedActiveStage = stage;
+      }
+      // A gated-but-incomplete stage blocks everything after it; anything
+      // else (ungated, or gated-and-completed) leaves the gate open.
+      if (isGated && !isCompleted) {
+        blocked = true;
+      }
+
+      return { ...stage, is_completed: isCompleted, is_unlocked: isUnlocked };
+    })
+  }));
+
+  return {
+    phases: annotatedPhases,
+    // Every stage was unlocked (student cleared the whole journey) — park
+    // them on the last stage of the last phase rather than leaving it null.
+    activePhase: resolvedActivePhase || journeyPhases[journeyPhases.length - 1] || null,
+    activeStage:
+      resolvedActiveStage ||
+      journeyPhases[journeyPhases.length - 1]?.stages?.[journeyPhases[journeyPhases.length - 1]?.stages?.length - 1] ||
+      null
+  };
 }
 
 /** Resolves which journeys row a student's workspace/query should use:
@@ -687,9 +751,9 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
     const userId = req.auth.userId;
     const profile = await getCurrentProfile(userId);
     const journeyId = await resolveEffectiveJourneyId(profile);
-    const journey = await loadJourney({ journeyId });
-    const activePhase = journey[0] || null;
-    const activeStage = activePhase?.stages?.[0] || null;
+    const rawJourney = await loadJourney({ journeyId });
+    const completedStageIds = await fetchCompletedStageIds(userId);
+    const { phases: journey, activePhase, activeStage } = annotateJourneyProgress(rawJourney, completedStageIds);
     const sessionId = await getOrCreateSession({
       userId,
       profileId: profile?.id || null,
@@ -953,7 +1017,7 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
       language: profile?.preferred_language || "english"
     });
 
-    const [context, existingSessionRow, { mentor, resolution }] = await Promise.all([
+    const [context, existingSessionRow, { mentor, resolution }, priorStageRun] = await Promise.all([
       fetchRetrievedContext({
         userId,
         profileId: profile?.id || null,
@@ -963,19 +1027,23 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
         question
       }),
       pool.query("SELECT memory_summary FROM conversation_sessions WHERE id = $1", [sessionId]),
-      resolveMentorForStage({ phase, stage })
+      resolveMentorForStage({ phase, stage }),
+      // Web search now runs once, when a student *enters* a stage — not per
+      // question (the chat text has zero influence on it). "Entering" is
+      // detected as "no agent_runs row exists yet for this user+stage", so
+      // this only fires on that stage's very first turn.
+      stage?.id
+        ? pool.query("SELECT 1 FROM agent_runs WHERE user_id = $1 AND stage_id = $2 LIMIT 1", [userId, stage.id])
+        : Promise.resolve({ rows: [] })
     ]);
     const existingSummary = existingSessionRow.rows[0]?.memory_summary || "";
     const recentMessages = [...context.recent_messages];
 
-    const browserSearchQueries = [
-      `${phase?.phase_name || profile?.startup_stage || "startup"} ${stage?.stage_name || ""} ${question}`.trim(),
-      `${profile?.country || "India"} ${profile?.goal_type || "startup"} market validation ${question}`.trim(),
-      `${profile?.interests || ""} ${question}`.trim()
-    ].filter(Boolean);
+    const isStageStart = Boolean(stage?.id) && !priorStageRun.rows.length;
+    const browserSearchQueries = isStageStart ? buildStageStartSearchQueries({ phase, stage, profile }) : [];
 
     let webResults = [];
-    const shouldSearchWeb = questionNeedsWebSearch(question);
+    const shouldSearchWeb = browserSearchQueries.length > 0;
     if (shouldSearchWeb) {
       webResults = await runWebSearchBatch(browserSearchQueries.slice(0, 2));
     }
@@ -1051,7 +1119,10 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
             [
               agentRun.rows[0].id,
-              question,
+              // The stage-start search query that actually produced this
+              // result (see buildStageStartSearchQueries) — not the
+              // student's chat question, which no longer drives this search.
+              result.query || browserSearchQueries[0] || "",
               new URL(result.url || "https://unknown").hostname,
               result.title,
               result.url,
@@ -1312,9 +1383,9 @@ router.post("/admin/startup/stages", requireAuth, async (req, res, next) => {
   `INSERT INTO journey_stages (
     phase_id, mentor_id, stage_key, stage_order, stage_name, stage_context,
     stage_objective, expected_outcome, readiness_criteria, recommended_actions,
-    is_active, created_by
+    search_focus, requires_deliverables, pass_score_threshold, is_active, created_by
   )
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, TRUE), $12)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12, FALSE), COALESCE($13, 60), COALESCE($14, TRUE), $15)
   RETURNING *`,
   [
     phaseId,
@@ -1327,6 +1398,9 @@ router.post("/admin/startup/stages", requireAuth, async (req, res, next) => {
     normalizeText(req.body?.expected_outcome || req.body?.expectedOutcome, 12000),
     normalizeText(req.body?.readiness_criteria || req.body?.readinessCriteria, 12000),
     normalizeText(req.body?.recommended_actions || req.body?.recommendedActions, 12000),
+    normalizeText(req.body?.search_focus || req.body?.searchFocus, 2000),
+    typeof req.body?.requires_deliverables === "boolean" ? req.body.requires_deliverables : undefined,
+    normalizeInteger(req.body?.pass_score_threshold || req.body?.passScoreThreshold, null),
     typeof req.body?.is_active === "boolean" ? req.body.is_active : undefined,
     req.auth.userId
   ]
@@ -1354,7 +1428,10 @@ router.put("/admin/startup/stages/:id", requireAuth, async (req, res, next) => {
        expected_outcome = COALESCE($9, expected_outcome),
        readiness_criteria = COALESCE($10, readiness_criteria),
        recommended_actions = COALESCE($11, recommended_actions),
-       is_active = COALESCE($12, is_active),
+       search_focus = COALESCE($12, search_focus),
+       requires_deliverables = COALESCE($13, requires_deliverables),
+       pass_score_threshold = COALESCE($14, pass_score_threshold),
+       is_active = COALESCE($15, is_active),
        updated_at = NOW()
    WHERE id = $1
    RETURNING *`,
@@ -1370,6 +1447,11 @@ router.put("/admin/startup/stages/:id", requireAuth, async (req, res, next) => {
     normalizeText(req.body?.expected_outcome || req.body?.expectedOutcome, 12000),
     normalizeText(req.body?.readiness_criteria || req.body?.readinessCriteria, 12000),
     normalizeText(req.body?.recommended_actions || req.body?.recommendedActions, 12000),
+    req.body?.search_focus !== undefined || req.body?.searchFocus !== undefined
+      ? normalizeText(req.body?.search_focus || req.body?.searchFocus, 2000)
+      : null,
+    typeof req.body?.requires_deliverables === "boolean" ? req.body.requires_deliverables : null,
+    normalizeInteger(req.body?.pass_score_threshold || req.body?.passScoreThreshold, null),
     typeof req.body?.is_active === "boolean" ? req.body.is_active : null
   ]
 );

@@ -38,43 +38,51 @@ _GITHUB_URL_RE = re.compile(r"^https?://(www\.)?github\.com/[\w.\-]+/[\w.\-]+/?$
 _URL_RE = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 
 
-def _review_text_submission(submission: StudentDeliverableSubmission, deliverable_name: str) -> dict:
+def _review_text_submission(submission: StudentDeliverableSubmission, deliverable_name: str, pass_threshold: int = 60) -> dict:
     """Lightweight, non-LLM validation for text/url/github submissions -
     good enough to gate obviously-empty or malformed submissions before a
     mentor looks at them; a full LLM pass can be layered on later without
-    changing this contract."""
+    changing this contract. Still runs each candidate's score against the
+    stage's own pass_score_threshold, same as the file-review path."""
     text = str(submission.submission_text or "").strip()
 
     if submission.submission_type == "github_repository":
-        passed = bool(_GITHUB_URL_RE.match(text))
+        valid = bool(_GITHUB_URL_RE.match(text))
+        score = 80 if valid else 20
         feedback = (
             "Repository link looks valid."
-            if passed
+            if valid
             else "This does not look like a valid GitHub repository URL (expected https://github.com/<owner>/<repo>)."
         )
-        return {"score": 80 if passed else 20, "status": "approved" if passed else "resubmission_required", "feedback": feedback}
+        return {"score": score, "status": "approved" if score >= pass_threshold else "resubmission_required", "feedback": feedback}
 
     if submission.submission_type == "url":
-        passed = bool(_URL_RE.match(text))
-        feedback = "Link looks valid." if passed else "This does not look like a valid URL."
-        return {"score": 80 if passed else 20, "status": "approved" if passed else "resubmission_required", "feedback": feedback}
+        valid = bool(_URL_RE.match(text))
+        score = 80 if valid else 20
+        feedback = "Link looks valid." if valid else "This does not look like a valid URL."
+        return {"score": score, "status": "approved" if score >= pass_threshold else "resubmission_required", "feedback": feedback}
 
     # Plain text deliverable.
     word_count = len(re.findall(r"\b[\w'-]+\b", text))
-    passed = word_count >= 40
+    has_content = word_count >= 40
+    score = min(95, 50 + word_count) if has_content else max(10, word_count * 2)
     feedback = (
         f"Submission for '{deliverable_name}' has enough content for mentor review."
-        if passed
+        if score >= pass_threshold
         else f"Submission for '{deliverable_name}' looks too short ({word_count} words). Add more detail before resubmitting."
     )
-    score = min(95, 50 + word_count) if passed else max(10, word_count * 2)
-    return {"score": score, "status": "approved" if passed else "resubmission_required", "feedback": feedback}
+    return {"score": score, "status": "approved" if score >= pass_threshold else "resubmission_required", "feedback": feedback}
 
 
 def create_ai_review(db: Session, submission_id: int) -> DeliverableReview:
     submission = _require_submission(db, submission_id)
     deliverable = repo.get_deliverable(db, submission.deliverable_id)
     deliverable_name = deliverable.deliverable_name if deliverable else "Deliverable"
+    stage = repo.get_stage(db, submission.stage_id)
+    # Admin-configured per-stage pass score (sql/migrations/2026-08-25_01_deliverable_gating.sql),
+    # default 60 - replaces stage_document_review.PASSING_SCORE (a fixed 75)
+    # for this specific "did this deliverable pass" decision.
+    pass_threshold = (stage or {}).get("pass_score_threshold", 60)
 
     if submission.submission_type == "file":
         files = repo.list_files_for_submission(db, submission.id)
@@ -101,14 +109,14 @@ def create_ai_review(db: Session, submission_id: int) -> DeliverableReview:
             if review_result.get("status") == "REJECTED":
                 outcome = {"score": 0, "status": "resubmission_required", "feedback": review_result.get("message", "Submission was rejected by AI content screening.")}
             else:
-                passed = review_result.get("status") == "pass"
+                score = int(review_result.get("score") or 0)
                 outcome = {
-                    "score": int(review_result.get("score") or 0),
-                    "status": "approved" if passed else "resubmission_required",
+                    "score": score,
+                    "status": "approved" if score >= pass_threshold else "resubmission_required",
                     "feedback": review_result.get("safe_student_feedback", ""),
                 }
     else:
-        outcome = _review_text_submission(submission, deliverable_name)
+        outcome = _review_text_submission(submission, deliverable_name, pass_threshold)
 
     review = repo.create_review(
         db,
@@ -193,6 +201,15 @@ def _maybe_complete_stage(db: Session, submission: StudentDeliverableSubmission)
     mark the stage complete in student_stage_progress (existing table/logic
     in app/services/startup_progress.py, untouched - this just calls it)."""
     from app.services.startup_progress import mark_stage_complete
+
+    stage = repo.get_stage(db, submission.stage_id)
+    # The admin's stage-level "Docs required to advance?" checkbox
+    # (journey_stages.requires_deliverables) is the master switch - when
+    # off, this stage is never gated by deliverables even if individual
+    # ones are still marked is_required (e.g. left over from before the
+    # checkbox was unchecked).
+    if not (stage or {}).get("requires_deliverables"):
+        return
 
     required_deliverables = [
         d for d in repo.list_deliverables_by_stage(db, submission.stage_id) if d.is_required

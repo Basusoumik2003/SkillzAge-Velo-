@@ -180,6 +180,15 @@ def mark_stage_complete(
     profile_id = ensure_student_profile(db, user_id)
     now = datetime.now(timezone.utc)
 
+    # Cumulative "what happened so far" summary - idea + this stage's chats
+    # and web research, folded on top of the previous stage's summary. See
+    # app/services/stage_summary_service.py. Built before the completion row
+    # is written so it can still look up the *previous* stage's stage_notes
+    # unambiguously (this stage isn't "completed" yet while that runs).
+    from app.services.stage_summary_service import build_stage_summary
+
+    stage_notes = build_stage_summary(db, user_id, stage_id)
+
     existing = (
         db.query(StudentStageProgress)
         .filter(StudentStageProgress.user_id == user_id, StudentStageProgress.stage_id == stage_id)
@@ -191,6 +200,7 @@ def mark_stage_complete(
         existing.completed_at = now
         existing.phase_id = phase_id or existing.phase_id
         existing.profile_id = existing.profile_id or profile_id
+        existing.stage_notes = stage_notes
         db.add(existing)
     else:
         db.add(
@@ -203,6 +213,7 @@ def mark_stage_complete(
                 progress_percent=100,
                 started_at=now,
                 completed_at=now,
+                stage_notes=stage_notes,
             )
         )
     db.commit()

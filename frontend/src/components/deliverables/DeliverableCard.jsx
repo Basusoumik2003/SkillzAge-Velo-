@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertCircle, History, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, FileDown, History, Loader2, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -62,6 +62,17 @@ export default function DeliverableCard({ entry, onChanged }) {
           </CardTitle>
           {deliverable.deliverable_description ? (
             <CardDescription>{deliverable.deliverable_description}</CardDescription>
+          ) : null}
+          {deliverable.template_url ? (
+            <a
+              href={deliverable.template_url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              Download template{deliverable.template_original_filename ? ` (${deliverable.template_original_filename})` : ""}
+            </a>
           ) : null}
         </div>
         <DeliverableStatusBadge status={latestSubmission?.status} />

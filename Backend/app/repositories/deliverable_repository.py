@@ -27,7 +27,8 @@ def get_stage(db: Session, stage_id: int) -> Optional[dict[str, Any]]:
     row = db.execute(
         text(
             """
-            SELECT id, phase_id, stage_name, stage_order, is_active
+            SELECT id, phase_id, stage_name, stage_order, is_active,
+                   requires_deliverables, pass_score_threshold
             FROM journey_stages
             WHERE id = :stage_id
             """

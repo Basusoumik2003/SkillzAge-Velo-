@@ -6,7 +6,7 @@ app/services/deliverable_review_service.py for the business logic."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -54,6 +54,23 @@ def update_deliverable(
     _admin: User = Depends(require_admin),
 ):
     return deliverable_service.update_deliverable(db, deliverable_id, payload)
+
+
+@router.post("/admin/deliverables/{deliverable_id}/template", response_model=StageDeliverableResponse, status_code=201)
+async def upload_deliverable_template(
+    deliverable_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    data = await file.read()
+    return deliverable_service.upload_deliverable_template(
+        db,
+        deliverable_id,
+        file_name=file.filename or "template",
+        data=data,
+        content_type=file.content_type or "application/octet-stream",
+    )
 
 
 @router.delete("/admin/deliverables/{deliverable_id}", status_code=204)

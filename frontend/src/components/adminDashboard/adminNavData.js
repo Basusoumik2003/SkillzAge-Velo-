@@ -67,8 +67,7 @@ export const ADMIN_NAV_GROUPS = [
     items: [
       { key: "coin_pricing", label: "Coin Pricing", description: "Configure pricing and discounts" },
       { key: "github_settings", label: "GitHub Settings", description: "Manage GitHub token and webhook" },
-      { key: "s3_cleanup", label: "S3 Cleanup", description: "Inspect and delete stored objects" },
-      { key: "theme_management", label: "Theme Management", description: "Edit banners, decorations, and themes" }
+      { key: "s3_cleanup", label: "S3 Cleanup", description: "Inspect and delete stored objects" }
     ]
   }
 ];

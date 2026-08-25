@@ -85,6 +85,10 @@ class StageDeliverable(Base):
     deliverable_type = Column(String(50), nullable=False, default="document")
     is_required = Column(Boolean, nullable=False, default=True)
     display_order = Column(Integer, nullable=False, default=1)
+    # Admin-uploaded demo/template file a student can download before
+    # filling out this deliverable (sql/migrations/2026-08-25_01_deliverable_gating.sql).
+    template_url = Column(Text, nullable=False, default="")
+    template_original_filename = Column(String(255), nullable=False, default="")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

@@ -7,7 +7,6 @@ import { Inter } from "next/font/google";
 import NavigationLoaderProvider from "@/components/NavigationLoaderProvider";
 import ToastProvider from "@/components/ToastProvider";
 import CookieConsent from "@/components/CookieConsent";
-import ThemeProvider from "@/components/theme/ThemeProvider";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -32,7 +31,7 @@ export default function RootLayout({ children }) {
         <Suspense fallback={null}>
           <NavigationLoaderProvider>
             <ToastProvider>
-              <ThemeProvider><main>{children}</main></ThemeProvider>
+              <main>{children}</main>
               <CookieConsent />
             </ToastProvider>
           </NavigationLoaderProvider>
