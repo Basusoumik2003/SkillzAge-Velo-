@@ -9,6 +9,18 @@ export async function getStartupWorkspace() {
   return data;
 }
 
+export async function listStartupJourneys() {
+  const { data } = await startupApi.get("/journeys");
+  return data;
+}
+
+export async function selectStartupJourney(journeyId) {
+  const { data } = await startupApi.post("/journey/select", {
+    journey_id: Number(journeyId)
+  });
+  return data;
+}
+
 export async function getStartupMentors() {
   const { data } = await adminApi.get("/startup/mentors");
   return data;

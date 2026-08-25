@@ -4,7 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { disclaimerAccepted } from "@/components/DisclaimerModal";
 import { getMentorChatHistory, reviewStageDocument, saveLocalChatMessage, sendMentorMessage } from "@/lib/chat";
-import { getStartupMentors, getStartupWorkspace } from "@/lib/startup";
+import {
+  getStartupMentors,
+  getStartupWorkspace,
+  selectStartupJourney
+} from "@/lib/startup";
 import {
   completeDashboardTask,
   getCatalogProject,
@@ -813,7 +817,31 @@ export default function useWorkspaceController() {
 
   let cancelled = false;
 
-  getStartupWorkspace()
+  const selectedJourneyId = String(
+    searchParams?.get("journey_id") || ""
+  ).trim();
+
+  const loadStartupWorkspace = async () => {
+    if (selectedJourneyId) {
+      try {
+        await selectStartupJourney(selectedJourneyId);
+
+        console.log(
+          "[WORKSPACE JOURNEY] Selected journey:",
+          selectedJourneyId
+        );
+      } catch (error) {
+        console.error(
+          "[WORKSPACE JOURNEY] Failed to select journey:",
+          error?.response?.data || error?.message || error
+        );
+      }
+    }
+
+    return getStartupWorkspace();
+  };
+
+  loadStartupWorkspace()
   .then((data) => {
     if (cancelled || !Array.isArray(data?.journey) || !data.journey.length) return;
 
@@ -848,7 +876,10 @@ export default function useWorkspaceController() {
     if (startupMentors.length) setWorkspaceAgents(startupMentors);
 
     const startupProject = {
-      title: "Startup Journey",
+      title:
+        data?.journey_name ||
+        data?.profile?.journey_name ||
+        "Startup Journey",
       steps: data.journey.map((phase) => ({
         title: phase.phase_name || phase.phase_key || "Phase",
         phase_context: phase.phase_description || phase.phase_objective || "",
@@ -870,7 +901,7 @@ export default function useWorkspaceController() {
     };
 
     setCatalogProject(startupProject);
-    setProjectName("Startup Journey");
+    setProjectName(startupProject.title);
     setMethodState({
       current_step: 1,
       tasks: startupProject.steps.map((step) => step.title),
@@ -887,7 +918,7 @@ export default function useWorkspaceController() {
   return () => {
     cancelled = true;
   };
-}, [authReady, ready]);
+}, [authReady, ready, searchParams]);
 
   const methodDisplayStep = useMemo(() => {
     return clampStep(methodState.current_step, methodTotalSteps || 1);
