@@ -651,6 +651,7 @@ export default function useWorkspaceController() {
   const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceClosed, setWorkspaceClosed] = useState({ closed: false, message: "" });
   const [projectName, setProjectName] = useState("");
+  const [startupJourneyId, setStartupJourneyId] = useState("");
 
   const [chatLoading, setChatLoading] = useState(false);
   const [chatServiceAvailable, setChatServiceAvailable] = useState(true);
@@ -728,6 +729,62 @@ export default function useWorkspaceController() {
       window.removeEventListener("WORKSPACE_AUTH_READY", handleAuthReady);
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const initialJourneyId = String(
+      searchParams?.get("journey_id") ||
+      localStorage.getItem("internlabs_journey_id") ||
+      ""
+    ).trim();
+
+    if (initialJourneyId) {
+      setStartupJourneyId(initialJourneyId);
+
+      console.log(
+        "[WORKSPACE JOURNEY] Initial journey ID:",
+        initialJourneyId
+      );
+    }
+
+    const handleJourneyUpdate = (event) => {
+      const journeyId = String(
+        event?.detail?.journeyId || ""
+      ).trim();
+
+      if (!journeyId) {
+        console.warn(
+          "[WORKSPACE JOURNEY] Journey update received without ID"
+        );
+        return;
+      }
+
+      console.log(
+        "[WORKSPACE JOURNEY] Journey ID received from Wix:",
+        journeyId
+      );
+
+      localStorage.setItem(
+        "internlabs_journey_id",
+        journeyId
+      );
+
+      setStartupJourneyId(journeyId);
+    };
+
+    window.addEventListener(
+      "WORKSPACE_JOURNEY_UPDATED",
+      handleJourneyUpdate
+    );
+
+    return () => {
+      window.removeEventListener(
+        "WORKSPACE_JOURNEY_UPDATED",
+        handleJourneyUpdate
+      );
+    };
+  }, [searchParams]);
 
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -818,7 +875,10 @@ export default function useWorkspaceController() {
   let cancelled = false;
 
   const selectedJourneyId = String(
-    searchParams?.get("journey_id") || ""
+    startupJourneyId ||
+    searchParams?.get("journey_id") ||
+    localStorage.getItem("internlabs_journey_id") ||
+    ""
   ).trim();
 
   const loadStartupWorkspace = async () => {
@@ -918,7 +978,7 @@ export default function useWorkspaceController() {
   return () => {
     cancelled = true;
   };
-}, [authReady, ready, searchParams]);
+}, [authReady, ready, searchParams, startupJourneyId]);
 
   const methodDisplayStep = useMemo(() => {
     return clampStep(methodState.current_step, methodTotalSteps || 1);
