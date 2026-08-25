@@ -31,6 +31,12 @@ router.post(
   authController.syncWixMember
 );
 
+router.post(
+  '/admin/check',
+  requireAuth,
+  authController.adminCheck
+);
+
 router.get(
   '/me',
   requireAuth,

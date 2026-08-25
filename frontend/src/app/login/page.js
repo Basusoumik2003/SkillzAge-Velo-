@@ -57,15 +57,6 @@ export default function LoginPage() {
         user
       });
 
-      try {
-        window.localStorage.setItem(
-          "internlabs_admin_token",
-          token
-        );
-      } catch {
-        // Ignore localStorage errors.
-      }
-
       // ==================================================
       // 3. CHECK ADMIN ACCESS
       //
@@ -86,11 +77,20 @@ export default function LoginPage() {
           }
         );
 
+        const adminData =
+          adminResponse?.data?.data ||
+          adminResponse?.data ||
+          {};
+
         isAdmin =
-          adminResponse?.data?.isAdmin === true;
+          adminData?.isAdmin === true ||
+          adminData?.admin === true ||
+          adminData?.can_access_admin === true;
 
         adminToken =
-          adminResponse?.data?.adminToken || "";
+          adminData?.adminToken ||
+          adminData?.token ||
+          "";
 
         console.log(
           "[LOGIN] Admin access check:",
@@ -119,6 +119,11 @@ export default function LoginPage() {
         if (adminToken) {
           try {
             window.localStorage.setItem(
+              "internlabs_admin_token",
+              adminToken
+            );
+
+            window.localStorage.setItem(
               "skillzage_admin_token",
               adminToken
             );
@@ -131,7 +136,13 @@ export default function LoginPage() {
           "[LOGIN] Approved admin detected. Redirecting to /adminJourney."
         );
 
-        router.replace("/adminJourney");
+        router.replace(
+          adminToken
+            ? `/adminJourney?adminToken=${encodeURIComponent(
+                adminToken
+              )}`
+            : "/adminJourney"
+        );
         return;
       }
 

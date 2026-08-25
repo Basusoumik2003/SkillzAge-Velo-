@@ -542,6 +542,121 @@ async function syncWixMember(req, res, next) {
 }
 
 // ======================================================
+// ADMIN CHECK
+//
+// Called by the frontend right after a normal login to
+// see whether this account is an approved administrator.
+// Relies on requireAuth populating req.auth.email
+// (see middlewares/authMiddleware.js).
+// ======================================================
+
+async function adminCheck(req, res, next) {
+  try {
+    const normalizedEmail = normalizeEmail(
+      req.auth?.email
+    );
+
+    logAuth("admin-check:start", {
+      email: normalizedEmail,
+    });
+
+    if (!normalizedEmail) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Admin email is missing from authentication.",
+      });
+    }
+
+    const user = await userModel.findByEmail(
+      normalizedEmail
+    );
+
+    logAuth("admin-check:user-lookup", {
+      email: normalizedEmail,
+      found: Boolean(user),
+    });
+
+    if (!user) {
+      return res.status(403).json({
+        success: false,
+        message: "Admin user not found.",
+      });
+    }
+
+    const adminResult = await db.query(
+      `
+      SELECT
+        id,
+        email,
+        can_access_admin,
+        is_active
+      FROM admin_credentials
+      WHERE LOWER(email) = LOWER($1)
+      LIMIT 1
+      `,
+      [normalizedEmail]
+    );
+
+    const admin = adminResult.rows[0] || null;
+
+    logAuth("admin-check:admin-lookup", {
+      email: normalizedEmail,
+      adminFound: Boolean(admin),
+      isActive: admin?.is_active,
+      canAccessAdmin: admin?.can_access_admin,
+    });
+
+    if (!admin) {
+      return res.status(403).json({
+        success: false,
+        message: "Admin access denied.",
+      });
+    }
+
+    if (!admin.is_active) {
+      return res.status(403).json({
+        success: false,
+        message: "Admin account is inactive.",
+      });
+    }
+
+    if (!admin.can_access_admin) {
+      return res.status(403).json({
+        success: false,
+        message: "Admin access is disabled.",
+      });
+    }
+
+    const adminToken = tokenForAdmin(user, admin);
+
+    logAuth("admin-check:admin-token-created", {
+      email: normalizedEmail,
+      userId: user && user.id,
+      adminId: admin.id,
+      tokenLength: String(adminToken || "").length,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Admin access confirmed",
+      data: {
+        isAdmin: true,
+        adminToken,
+        user,
+      },
+    });
+  } catch (err) {
+    logAuth("admin-check:error", {
+      message: err.message,
+      stack: err.stack,
+    });
+
+    return next(err);
+  }
+}
+
+// ======================================================
 // AUTHENTICATED USER
 // ======================================================
 
@@ -574,5 +689,6 @@ module.exports = {
   signup,
   login,
   syncWixMember,
+  adminCheck,
   me,
 };
