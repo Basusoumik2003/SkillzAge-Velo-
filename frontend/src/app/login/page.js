@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { Loader2, LogIn, ShieldCheck } from "lucide-react";
 
-import { authServiceApi, adminApi } from "@/lib/api";
+import { authServiceApi } from "@/lib/api";
 
 import { setAuthSession } from "@/lib/authStorage";
 
@@ -32,12 +32,11 @@ export default function LoginPage() {
     setError("");
 
     try {
-      // =====================================================
-      // STEP 1: NORMAL LOGIN
-      // =====================================================
-
+      // ==================================================
+      // 1. NORMAL AUTHENTICATION
+      // ==================================================
       const { data } = await authServiceApi.post("/login", {
-        email: email.trim(),
+        email,
         password
       });
 
@@ -46,123 +45,119 @@ export default function LoginPage() {
 
       if (!token) {
         throw new Error(
-          "Login succeeded but no token was returned."
+          "Login succeeded, but no authentication token was returned."
         );
       }
 
-      // =====================================================
-      // STEP 2: STORE NORMAL AUTH SESSION
-      // =====================================================
-
+      // ==================================================
+      // 2. STORE THE NORMAL USER SESSION
+      // ==================================================
       setAuthSession({
         token,
         user
       });
 
-      // Keep the existing token storage.
       try {
         window.localStorage.setItem(
           "internlabs_admin_token",
           token
         );
       } catch {
-        // Ignore storage issues.
+        // Ignore localStorage errors.
       }
 
-      // =====================================================
-      // STEP 3: CHECK WHETHER THIS USER IS AN ADMIN
-      // =====================================================
-
+      // ==================================================
+      // 3. CHECK ADMIN ACCESS
+      //
+      // The normal login token is used to ask the backend
+      // whether this account is an approved administrator.
+      // ==================================================
       let isAdmin = false;
       let adminToken = "";
 
       try {
-        console.log("[LOGIN] Checking admin access...");
-
-        const adminResponse = await adminApi.post(
-          "/auth/admin/check"
+        const adminResponse = await authServiceApi.post(
+          "/auth/admin/check",
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
         );
 
-        const adminData = adminResponse?.data || {};
+        isAdmin =
+          adminResponse?.data?.isAdmin === true;
+
+        adminToken =
+          adminResponse?.data?.adminToken || "";
 
         console.log(
-          "[LOGIN] Admin check result:",
-          adminData
+          "[LOGIN] Admin access check:",
+          {
+            isAdmin,
+            email: user?.email || email
+          }
+        );
+      } catch (adminError) {
+        console.log(
+          "[LOGIN] Account is not an approved admin. Continuing as a normal user.",
+          adminError?.response?.data ||
+            adminError?.message
         );
 
-        isAdmin = adminData?.isAdmin === true;
-        adminToken = adminData?.adminToken || "";
+        isAdmin = false;
+      }
 
-        // ===================================================
-        // STEP 4: STORE ADMIN TOKEN IF ADMIN
-        // ===================================================
-
-        if (isAdmin && adminToken) {
+      // ==================================================
+      // 4. ADMIN USER
+      //
+      // Approved administrators go directly to the
+      // admin journey management page.
+      // ==================================================
+      if (isAdmin) {
+        if (adminToken) {
           try {
             window.localStorage.setItem(
               "internlabs_admin_token",
               adminToken
             );
           } catch {
-            // Ignore storage issues.
+            // Ignore localStorage errors.
           }
         }
-      } catch (adminError) {
-        /*
-         * Admin check failing does NOT mean normal login failed.
-         *
-         * A normal user is allowed to continue to /workspace.
-         *
-         * If this is an admin account and the admin check fails,
-         * the backend will simply not identify it as an admin.
-         */
 
-        console.warn(
-          "[LOGIN] Admin check failed:",
-          adminError?.response?.data ||
-            adminError?.message ||
-            adminError
-        );
-
-        isAdmin = false;
-      }
-
-      // =====================================================
-      // STEP 5: FINAL ROUTING
-      // =====================================================
-
-      if (isAdmin) {
         console.log(
-          "[LOGIN] Admin detected. Opening /adminJourney"
+          "[LOGIN] Approved admin detected. Redirecting to /adminJourney."
         );
 
         router.replace("/adminJourney");
         return;
       }
 
-      // =====================================================
-      // NORMAL USER
-      // =====================================================
-
+      // ==================================================
+      // 5. NORMAL USER
+      //
+      // Non-admin accounts continue to the requested
+      // workspace or the default workspace.
+      // ==================================================
       console.log(
-        "[LOGIN] Normal user. Opening:",
+        "[LOGIN] Normal account detected. Redirecting to:",
         returnTo
       );
 
       router.replace(returnTo);
     } catch (err) {
       console.error(
-        "[LOGIN] Login error:",
-        err?.response?.data ||
-          err?.message ||
-          err
+        "[LOGIN] Authentication failed:",
+        err?.response?.data || err
       );
 
       setError(
         err?.response?.data?.message ||
           err?.response?.data?.detail ||
           err?.message ||
-          "Login failed."
+          "We couldn't sign you in. Please check your email and password and try again."
       );
     } finally {
       setLoading(false);
@@ -184,37 +179,37 @@ export default function LoginPage() {
           <div className="absolute -bottom-20 -left-16 h-56 w-56 rounded-full bg-[#fff0e4] blur-2xl" />
 
           <p className="text-[10px] font-black uppercase tracking-[0.36em] text-orange-500">
-            Startup Login
+            SkillzAge Access
           </p>
 
           <h1 className="mt-3 max-w-xl text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">
-            Sign in to your startup journey workspace.
+            Welcome back to your SkillzAge journey.
           </h1>
 
           <p className="mt-4 max-w-xl text-base font-medium leading-7 text-slate-600">
-            Use the same account you registered in the auth service.
-            After login, the system stores your token and opens the
-            appropriate workspace.
+            Sign in with your SkillzAge account to continue
+            where you left off. Your account type determines
+            which part of the platform you enter.
           </p>
 
           <div className="mt-8 grid gap-3 sm:grid-cols-2">
 
             {[
               [
-                "Profile-aware",
-                "Your student context follows you into every answer."
+                "Your journey",
+                "Continue working through your startup journey with your existing account."
               ],
               [
-                "Stage-aware",
-                "Questions are routed using your current startup phase."
+                "Your progress",
+                "Your profile and journey context stay connected to your account."
               ],
               [
-                "Memory-backed",
-                "The system saves session summaries and follow-ups."
+                "Workspace",
+                "Regular users are taken directly to their SkillzAge workspace."
               ],
               [
-                "Admin-ready",
-                "Approved admin accounts are automatically taken to the admin journey manager."
+                "Admin access",
+                "Approved administrators are taken directly to the journey management area."
               ]
             ].map(([title, body]) => (
               <div
@@ -248,11 +243,11 @@ export default function LoginPage() {
 
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.28em] text-slate-400">
-                Auth
+                Secure Access
               </p>
 
               <h2 className="text-2xl font-black text-slate-950">
-                Login
+                Sign in
               </h2>
             </div>
 
@@ -268,7 +263,7 @@ export default function LoginPage() {
             <label className="grid gap-2">
 
               <span className="text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-                Email
+                Email address
               </span>
 
               <input
@@ -294,7 +289,7 @@ export default function LoginPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Your password"
+                placeholder="Enter your password"
                 className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-orange-300 focus:bg-white"
                 autoComplete="current-password"
               />
@@ -327,7 +322,7 @@ export default function LoginPage() {
               )}
 
               {loading
-                ? "Signing in..."
+                ? "Checking your account..."
                 : "Sign in"}
             </button>
 
@@ -336,10 +331,11 @@ export default function LoginPage() {
           {/* INFORMATION */}
 
           <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
-            If you land here from `/workspace`, normal users
-            will be taken back automatically after login.
-            Approved admin accounts are automatically taken
-            to `/adminJourney`.
+            After signing in, SkillzAge automatically takes
+            you to the right place for your account. Regular
+            users continue to the workspace, while approved
+            administrators are taken directly to the admin
+            journey manager.
           </div>
 
         </div>
