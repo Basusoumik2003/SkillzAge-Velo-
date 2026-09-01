@@ -10,6 +10,7 @@
 -- the workspace backend code reads/writes that SkillzAge's users table
 -- doesn't have yet.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS wix_member_id VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS gender VARCHAR(30) NOT NULL DEFAULT 'other';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
@@ -422,6 +423,25 @@ CREATE TABLE IF NOT EXISTS projects (
   CONSTRAINT fk_projects_company
     FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE RESTRICT
 );
+
+-- Backfill columns for databases where projects already existed.
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS company_id INTEGER;
+
+UPDATE projects
+SET company_id = (
+  SELECT id FROM companies
+  WHERE slug = 'internzbee-default'
+  LIMIT 1
+)
+WHERE company_id IS NULL;
+
+ALTER TABLE projects
+  ALTER COLUMN company_id SET DEFAULT 1,
+  ALTER COLUMN company_id SET NOT NULL;
+
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS is_demo_project BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS ix_projects_company_id ON projects(company_id);
 CREATE INDEX IF NOT EXISTS ix_projects_company_active ON projects(company_id, is_active);
