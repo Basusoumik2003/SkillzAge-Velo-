@@ -751,6 +751,17 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
     const userId = req.auth.userId;
     const profile = await getCurrentProfile(userId);
     const journeyId = await resolveEffectiveJourneyId(profile);
+    // The selected journey's own metadata (name/description/objective). Resolved
+    // from journeyId above - which is the student's picked journey
+    // (student_profiles.journey_id) or the default - not "the first journey in
+    // the table". loadJourney() only returns the phases array, so this row has
+    // to be fetched separately.
+    const journeyRow = journeyId
+      ? (await pool.query(
+          "SELECT id, journey_key, journey_name, journey_description, journey_objective FROM journeys WHERE id = $1 LIMIT 1",
+          [journeyId]
+        )).rows[0] || null
+      : null;
     const rawJourney = await loadJourney({ journeyId });
     const completedStageIds = await fetchCompletedStageIds(userId);
     const { phases: journey, activePhase, activeStage } = annotateJourneyProgress(rawJourney, completedStageIds);
@@ -776,8 +787,19 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
       profile,
       journey_id: journeyId,
       journey,
-      journey_name: rawJourney?.journey_name || "",
-      journey_description: rawJourney?.journey_description || "",
+      // journey stays the phases array (existing phase/stage logic depends on
+      // it). The selected journey's own metadata goes in journey_info.
+      journey_info: journeyRow
+        ? {
+            id: journeyRow.id,
+            journey_name: journeyRow.journey_name || "",
+            journey_description: journeyRow.journey_description || "",
+            journey_objective: journeyRow.journey_objective || ""
+          }
+        : null,
+      // Flat fields kept for backward compatibility with existing callers.
+      journey_name: journeyRow?.journey_name || "",
+      journey_description: journeyRow?.journey_description || "",
       active_phase: activePhase,
       active_stage: activeStage,
       session_id: sessionId,

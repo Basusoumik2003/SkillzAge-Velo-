@@ -47,6 +47,9 @@ export default function useStartupWorkspaceController() {
   const [workspace, setWorkspace] = useState({
     profile: null,
     journey: [],
+    // Selected journey's metadata (id/name/description) - kept separate from
+    // `journey`, which is the phases array the phase/stage logic walks.
+    journey_info: null,
     active_phase: null,
     active_stage: null,
     session_id: null,
@@ -90,7 +93,8 @@ export default function useStartupWorkspaceController() {
         if (cancelled) return;
         setWorkspace({
   ...data,
-  profile: data?.profile || EMPTY_PROFILE
+  profile: data?.profile || EMPTY_PROFILE,
+  journey_info: data?.journey_info || null
 });
         setActivePhaseId(data?.active_phase?.id || data?.journey?.[0]?.id || null);
         setActiveStageId(data?.active_stage?.id || data?.journey?.[0]?.stages?.[0]?.id || null);

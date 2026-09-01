@@ -937,9 +937,14 @@ export default function useWorkspaceController() {
 
     const startupProject = {
       title:
+        data?.journey_info?.journey_name ||
         data?.journey_name ||
         data?.profile?.journey_name ||
         "Startup Journey",
+      description:
+        data?.journey_info?.journey_description ||
+        data?.journey_description ||
+        "",
       steps: data.journey.map((phase) => ({
         title: phase.phase_name || phase.phase_key || "Phase",
         phase_context: phase.phase_description || phase.phase_objective || "",
