@@ -75,10 +75,10 @@ export default function Sidebar({ activeTab, onSelectTab, counts = {}, open, onC
                     key={item.key}
                     type="button"
                     onClick={() => onSelectTab(item.key)}
-                    className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-bold transition ${
+                    className={`flex w-full items-center gap-3 rounded-2xl border-l-2 px-3 py-2.5 text-sm font-bold transition-all ${
                       isActive
-                        ? "bg-orange-50 text-orange-700"
-                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                        ? "border-l-orange-600 bg-orange-50 text-orange-700 shadow-sm"
+                        : "border-l-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                     }`}
                   >
                     <Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-orange-600" : "text-slate-400"}`} />

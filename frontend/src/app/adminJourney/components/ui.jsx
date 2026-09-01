@@ -52,7 +52,7 @@ export function StatTile({ label, value, detail, tone = "slate", icon: Icon }) {
 
 export function Panel({ title, description, icon: Icon, actions, children }) {
   return (
-    <section className="rounded-[2rem] border border-slate-200 bg-white p-6">
+    <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.35)] transition-shadow hover:shadow-[0_16px_40px_-24px_rgba(15,23,42,0.4)]">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           {Icon ? (
@@ -77,7 +77,7 @@ export function Panel({ title, description, icon: Icon, actions, children }) {
 
 export function EmptyState({ children }) {
   return (
-    <p className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-semibold text-slate-500">
+    <p className="animate-pulse rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm font-semibold text-slate-500">
       {children}
     </p>
   );

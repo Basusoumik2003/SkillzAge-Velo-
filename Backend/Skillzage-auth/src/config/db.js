@@ -1,12 +1,33 @@
 const { Pool } = require('pg');
 require('./env');
 
+/**
+ * RDS requires SSL for the connection from EC2, but a local Postgres
+ * instance (e.g. localhost during development) usually has no SSL
+ * configured at all — forcing SSL there fails with "The server does
+ * not support SSL connections". Only enable SSL for non-local hosts.
+ */
+function resolveSsl(hostname) {
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return false;
+  }
+
+  return { rejectUnauthorized: false };
+}
+
+function resolveSslFromConnectionString(connectionString) {
+  try {
+    return resolveSsl(new URL(connectionString).hostname);
+  } catch {
+    // Fall through to SSL enabled if the connection string can't be parsed.
+    return { rejectUnauthorized: false };
+  }
+}
+
 const pool = process.env.DATABASE_URL
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: {
-        rejectUnauthorized: false,
-      },
+      ssl: resolveSslFromConnectionString(process.env.DATABASE_URL),
     })
   : new Pool({
       host: process.env.PGHOST,
@@ -14,9 +35,7 @@ const pool = process.env.DATABASE_URL
       user: process.env.PGUSER,
       password: process.env.PGPASSWORD,
       database: process.env.PGDATABASE,
-      ssl: {
-        rejectUnauthorized: false,
-      },
+      ssl: resolveSsl(process.env.PGHOST),
     });
 
 function logDb(step, payload) {

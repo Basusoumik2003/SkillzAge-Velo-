@@ -120,9 +120,9 @@ export default function DashboardTab({
                       <tr
                         key={item.id}
                         onClick={() => onViewJourney(item.id)}
-                        className="cursor-pointer transition hover:bg-slate-50"
+                        className="group cursor-pointer transition hover:bg-slate-50"
                       >
-                        <td className="py-3 pr-3">
+                        <td className="border-l-2 border-transparent py-3 pr-3 transition-colors group-hover:border-orange-400">
                           <p className="font-black text-slate-900">{item.journey_name}</p>
                           <p className="text-xs font-semibold text-slate-400">{item.journey_key}</p>
                         </td>

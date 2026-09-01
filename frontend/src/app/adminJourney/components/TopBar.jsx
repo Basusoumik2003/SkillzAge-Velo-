@@ -22,13 +22,13 @@ const TAB_SEARCH_PLACEHOLDER = {
   "global-sources": "Search global sources..."
 };
 
-export default function TopBar({ activeTab, onOpenSidebar, searchQuery, onSearchChange, attentionItems = [] }) {
+export default function TopBar({ activeTab, onOpenSidebar, searchQuery, onSearchChange, attentionItems = [], onLogout }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const searchable = Boolean(TAB_SEARCH_PLACEHOLDER[activeTab]);
 
   return (
-    <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-slate-200 bg-white/90 px-4 py-4 backdrop-blur sm:px-6">
+    <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-slate-200 bg-white/90 px-4 py-4 shadow-sm backdrop-blur sm:px-6">
       <button
         type="button"
         onClick={onOpenSidebar}
@@ -118,7 +118,10 @@ export default function TopBar({ activeTab, onOpenSidebar, searchQuery, onSearch
               <div className="absolute right-0 top-full z-20 mt-2 w-44 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-lg">
                 <button
                   type="button"
-                  onClick={() => setProfileOpen(false)}
+                  onClick={() => {
+                    setProfileOpen(false);
+                    onLogout?.();
+                  }}
                   className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold text-rose-600 transition hover:bg-rose-50"
                 >
                   <LogOut className="h-4 w-4" />

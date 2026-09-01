@@ -4,7 +4,9 @@ import { useMemo, useState } from "react";
 
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { Loader2, LogIn, ShieldCheck } from "lucide-react";
+import { motion } from "framer-motion";
+
+import { AlertCircle, Loader2, LogIn, ShieldCheck } from "lucide-react";
 
 import { authServiceApi } from "@/lib/api";
 
@@ -185,23 +187,46 @@ export default function LoginPage() {
 
         <div className="relative overflow-hidden rounded-[2.5rem] border border-white/70 bg-white/85 p-8 shadow-[0_28px_90px_-58px_rgba(15,23,42,0.42)] backdrop-blur">
 
-          <div className="absolute -right-16 -top-16 h-56 w-56 rounded-full bg-orange-100/70 blur-2xl" />
+          <motion.div
+            className="absolute -right-16 -top-16 h-56 w-56 rounded-full bg-orange-100/70 blur-2xl"
+            animate={{ x: [0, 14, 0], y: [0, -10, 0] }}
+            transition={{ duration: 9, repeat: Infinity, ease: "easeInOut" }}
+          />
 
-          <div className="absolute -bottom-20 -left-16 h-56 w-56 rounded-full bg-[#fff0e4] blur-2xl" />
+          <motion.div
+            className="absolute -bottom-20 -left-16 h-56 w-56 rounded-full bg-[#fff0e4] blur-2xl"
+            animate={{ x: [0, -12, 0], y: [0, 12, 0] }}
+            transition={{ duration: 11, repeat: Infinity, ease: "easeInOut" }}
+          />
 
-          <p className="text-[10px] font-black uppercase tracking-[0.36em] text-orange-500">
+          <motion.p
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="text-[10px] font-black uppercase tracking-[0.36em] text-orange-500"
+          >
             SkillzAge Access
-          </p>
+          </motion.p>
 
-          <h1 className="mt-3 max-w-xl text-4xl font-black tracking-tight text-slate-950 sm:text-5xl">
+          <motion.h1
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.08 }}
+            className="mt-3 max-w-xl text-4xl font-black tracking-tight text-slate-950 sm:text-5xl"
+          >
             Welcome back to your SkillzAge journey.
-          </h1>
+          </motion.h1>
 
-          <p className="mt-4 max-w-xl text-base font-medium leading-7 text-slate-600">
+          <motion.p
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.14 }}
+            className="mt-4 max-w-xl text-base font-medium leading-7 text-slate-600"
+          >
             Sign in with your SkillzAge account to continue
             where you left off. Your account type determines
             which part of the platform you enter.
-          </p>
+          </motion.p>
 
           <div className="mt-8 grid gap-3 sm:grid-cols-2">
 
@@ -222,10 +247,13 @@ export default function LoginPage() {
                 "Admin access",
                 "Approved administrators are taken directly to the journey management area."
               ]
-            ].map(([title, body]) => (
-              <div
+            ].map(([title, body], index) => (
+              <motion.div
                 key={title}
-                className="rounded-3xl border border-slate-200 bg-white px-4 py-4"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: 0.2 + index * 0.06 }}
+                className="rounded-3xl border border-slate-200 bg-white px-4 py-4 transition-shadow hover:shadow-[0_18px_40px_-28px_rgba(15,23,42,0.35)]"
               >
                 <p className="text-sm font-black text-slate-950">
                   {title}
@@ -234,7 +262,7 @@ export default function LoginPage() {
                 <p className="mt-1 text-sm leading-6 text-slate-600">
                   {body}
                 </p>
-              </div>
+              </motion.div>
             ))}
 
           </div>
@@ -310,8 +338,9 @@ export default function LoginPage() {
             {/* ERROR */}
 
             {error ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-                {error}
+              <div className="flex items-start gap-2.5 rounded-2xl border border-rose-200 border-l-4 border-l-rose-500 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{error}</span>
               </div>
             ) : null}
 
@@ -324,7 +353,7 @@ export default function LoginPage() {
                 !email.trim() ||
                 !password.trim()
               }
-              className="mt-2 inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-sm font-black text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="mt-2 inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-orange-500 to-amber-500 px-5 py-3.5 text-sm font-black text-white shadow-[0_18px_32px_-18px_rgba(249,115,22,0.9)] transition-all hover:-translate-y-0.5 hover:shadow-[0_22px_40px_-16px_rgba(249,115,22,0.95)] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
             >
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

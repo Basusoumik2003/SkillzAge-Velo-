@@ -776,6 +776,8 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
       profile,
       journey_id: journeyId,
       journey,
+      journey_name: rawJourney?.journey_name || "",
+      journey_description: rawJourney?.journey_description || "",
       active_phase: activePhase,
       active_stage: activeStage,
       session_id: sessionId,

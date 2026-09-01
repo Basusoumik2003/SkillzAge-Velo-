@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import useRequireAuth from "@/lib/useRequireAuth";
 import MentorManager from "@/components/adminDashboard/MentorManager";
@@ -133,16 +134,31 @@ export default function AdminJourneyPage() {
       console.log(
         "[ADMIN AUTH] Admin token received from URL and stored."
       );
+
+      // Strip the token out of the URL/history now that it's saved -
+      // otherwise it sits in the address bar (and any bookmark) forever
+      // and can silently re-authenticate a session after logout.
+      router.replace("/adminJourney");
     } catch (error) {
       console.error(
         "[ADMIN AUTH] Failed to store admin token:",
         error
       );
     }
-  }, [searchParams]);
+  }, [router, searchParams]);
 
   useRequireAuth();
-  useRequireAuth();
+
+  const handleLogout = () => {
+    try {
+      window.localStorage.removeItem("skillzage_admin_token");
+      window.localStorage.removeItem("internlabs_admin_token");
+    } catch (error) {
+      console.error("[ADMIN AUTH] Failed to clear admin session:", error);
+    }
+
+    router.replace("/login");
+  };
 
   const [activeTab, setActiveTab] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -775,6 +791,7 @@ export default function AdminJourneyPage() {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           attentionItems={attentionItems}
+          onLogout={handleLogout}
         />
 
         <div className="flex-1 px-4 py-6 sm:px-6 lg:px-8">

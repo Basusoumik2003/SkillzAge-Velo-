@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence, motion } from "framer-motion";
 import { Check, ChevronsLeft, ChevronsRight, Circle, Loader2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -76,13 +77,13 @@ export default function PhaseSidebar({
                       }}
                       disabled={!unlocked}
                       className={cn(
-                        "flex w-full items-start gap-2.5 rounded-xl border px-2.5 py-2.5 text-left transition disabled:cursor-not-allowed disabled:opacity-60",
-                        active ? "border-primary/30 bg-primary/5" : "border-transparent hover:bg-muted/50"
+                        "flex w-full items-start gap-2.5 rounded-xl border px-2.5 py-2.5 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60",
+                        active ? "border-primary/30 bg-primary/5 shadow-sm" : "border-transparent hover:bg-muted/50"
                       )}
                     >
                       <span
                         className={cn(
-                          "mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 text-[10px] font-bold",
+                          "mt-0.5 grid h-5 w-5 shrink-0 place-items-center overflow-hidden rounded-full border-2 text-[10px] font-bold",
                           completed
                             ? "border-success bg-success text-white"
                             : active
@@ -90,7 +91,30 @@ export default function PhaseSidebar({
                               : "border-border bg-background text-secondary"
                         )}
                       >
-                        {completed ? <Check className="h-3 w-3" /> : step}
+                        <AnimatePresence mode="wait" initial={false}>
+                          {completed ? (
+                            <motion.span
+                              key="check"
+                              initial={{ scale: 0.4, opacity: 0 }}
+                              animate={{ scale: 1, opacity: 1 }}
+                              exit={{ scale: 0.4, opacity: 0 }}
+                              transition={{ duration: 0.22, ease: "easeOut" }}
+                              className="grid place-items-center"
+                            >
+                              <Check className="h-3 w-3" />
+                            </motion.span>
+                          ) : (
+                            <motion.span
+                              key="step"
+                              initial={{ scale: 0.4, opacity: 0 }}
+                              animate={{ scale: 1, opacity: 1 }}
+                              exit={{ scale: 0.4, opacity: 0 }}
+                              transition={{ duration: 0.18 }}
+                            >
+                              {step}
+                            </motion.span>
+                          )}
+                        </AnimatePresence>
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className={cn("block truncate text-sm font-semibold", active ? "text-primary" : "text-foreground")}>
@@ -115,7 +139,7 @@ export default function PhaseSidebar({
                     </button>
 
                     {active && stages.length > 0 ? (
-                      <div className="ml-7 mt-1 flex flex-col gap-0.5 border-l border-border pl-3">
+                      <div className="ml-7 mt-1 flex flex-col gap-0.5 pl-3">
                         {stages.map((stage, si) => {
                           const sk = stageProgressKey(projectName, step, si);
                           const stageDone = Boolean(completedStages[sk]);
@@ -125,25 +149,32 @@ export default function PhaseSidebar({
                           const selectable = stageDone || stageWorking || stageAccessible;
 
                           return (
-                            <button
-                              key={si}
-                              type="button"
-                              disabled={!selectable}
-                              onClick={() => selectable && onSelectStage?.(step, si)}
-                              className={cn(
-                                "flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
-                                stageIsActive ? "bg-primary/10 text-primary" : "text-secondary hover:bg-muted/50"
-                              )}
-                            >
-                              {stageDone ? (
-                                <Check className="h-3 w-3 shrink-0 text-success" />
-                              ) : stageWorking ? (
-                                <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
-                              ) : (
-                                <Circle className="h-2.5 w-2.5 shrink-0 text-muted-foreground" />
-                              )}
-                              <span className="truncate">{stage?.title || "Stage"}</span>
-                            </button>
+                            <div key={si} className="relative">
+                              <span
+                                className={cn(
+                                  "absolute -left-3 top-1 bottom-1 w-0.5 rounded-full transition-colors",
+                                  stageDone ? "bg-success" : stageWorking || stageIsActive ? "bg-primary" : "bg-border"
+                                )}
+                              />
+                              <button
+                                type="button"
+                                disabled={!selectable}
+                                onClick={() => selectable && onSelectStage?.(step, si)}
+                                className={cn(
+                                  "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
+                                  stageIsActive ? "bg-primary/10 text-primary" : "text-secondary hover:bg-muted/50"
+                                )}
+                              >
+                                {stageDone ? (
+                                  <Check className="h-3 w-3 shrink-0 text-success" />
+                                ) : stageWorking ? (
+                                  <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
+                                ) : (
+                                  <Circle className="h-2.5 w-2.5 shrink-0 text-muted-foreground" />
+                                )}
+                                <span className="truncate">{stage?.title || "Stage"}</span>
+                              </button>
+                            </div>
                           );
                         })}
                       </div>

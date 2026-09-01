@@ -15,7 +15,7 @@ const AI_WORKSPACE_MIN_SIZE = 32;
 
 function ResizeHandle() {
   return (
-    <PanelResizeHandle className="group relative w-px shrink-0 bg-border transition-colors hover:bg-primary/40 focus-visible:outline-none">
+    <PanelResizeHandle className="group relative w-px shrink-0 bg-border transition-all hover:w-1 hover:bg-primary/40 focus-visible:outline-none">
       <span className="absolute inset-y-0 -left-1 -right-1" />
     </PanelResizeHandle>
   );
@@ -23,7 +23,7 @@ function ResizeHandle() {
 
 function VerticalResizeHandle() {
   return (
-    <PanelResizeHandle className="group relative h-px shrink-0 bg-border transition-colors hover:bg-primary/40 focus-visible:outline-none">
+    <PanelResizeHandle className="group relative h-px shrink-0 bg-border transition-all hover:h-1 hover:bg-primary/40 focus-visible:outline-none">
       <span className="absolute inset-x-0 -top-1 -bottom-1" />
     </PanelResizeHandle>
   );

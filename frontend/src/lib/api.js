@@ -132,6 +132,97 @@ export const contactApi = axios.create({
 let isRefreshing = false;
 let refreshPromise = null;
 
+function getRefreshedAccessToken() {
+  if (!isRefreshing) {
+    isRefreshing = true;
+
+    const refreshToken = localStorage.getItem(
+      "internlabs_refresh_token"
+    );
+
+    refreshPromise = authServiceApi
+      .post("/refresh", {
+        refresh_token: refreshToken,
+      })
+
+      .then(({ data }) => {
+        localStorage.setItem(
+          "internlabs_token",
+          data.access_token
+        );
+
+        if (data.refresh_token) {
+          localStorage.setItem(
+            "internlabs_refresh_token",
+            data.refresh_token
+          );
+        }
+
+        return data.access_token;
+      })
+
+      .catch((refreshError) => {
+        localStorage.removeItem("internlabs_token");
+        localStorage.removeItem(
+          "internlabs_refresh_token"
+        );
+        localStorage.removeItem("internlabs_user");
+
+        throw refreshError;
+      })
+
+      .finally(() => {
+        isRefreshing = false;
+      });
+  }
+
+  return refreshPromise;
+}
+
+// Attaches the same "expired access token -> refresh -> retry once" flow
+// used by `api` to any other axios instance that authenticates with
+// internlabs_token. Without this, an expired token surfaces as a bare 401
+// instead of transparently refreshing.
+function attachTokenRefresh(instance) {
+  instance.interceptors.response.use(
+    (response) => response,
+
+    async (error) => {
+      const originalRequest = error?.config;
+
+      if (
+        !originalRequest ||
+        error?.response?.status !== 401 ||
+        originalRequest._retry ||
+        typeof window === "undefined"
+      ) {
+        return Promise.reject(error);
+      }
+
+      const refreshToken = localStorage.getItem(
+        "internlabs_refresh_token"
+      );
+
+      if (!refreshToken) {
+        return Promise.reject(error);
+      }
+
+      originalRequest._retry = true;
+
+      try {
+        const newAccessToken = await getRefreshedAccessToken();
+
+        originalRequest.headers.Authorization =
+          `Bearer ${newAccessToken}`;
+
+        return instance(originalRequest);
+      } catch (refreshError) {
+        return Promise.reject(error);
+      }
+    }
+  );
+}
+
 
 // ======================================================
 // NORMAL USER API
@@ -385,89 +476,20 @@ authServiceApi.interceptors.response.use(
 // ======================================================
 // This is ONLY for internlabs_token.
 // Admin authentication does NOT use this refresh flow.
+//
+// Every instance below authenticates with internlabs_token, so an expired
+// access token should transparently refresh-and-retry rather than surface
+// as a bare 401 (previously only `api` had this wired up).
 
-api.interceptors.response.use(
-  (response) => response,
-
-  async (error) => {
-    const originalRequest = error?.config;
-
-    if (
-      !originalRequest ||
-      error?.response?.status !== 401 ||
-      originalRequest._retry
-    ) {
-      return Promise.reject(error);
-    }
-
-    if (typeof window === "undefined") {
-      return Promise.reject(error);
-    }
-
-    const refreshToken = localStorage.getItem(
-      "internlabs_refresh_token"
-    );
-
-    if (!refreshToken) {
-      return Promise.reject(error);
-    }
-
-    originalRequest._retry = true;
-
-    if (!isRefreshing) {
-      isRefreshing = true;
-
-      refreshPromise = authServiceApi
-        .post("/refresh", {
-          refresh_token: refreshToken,
-        })
-
-        .then(({ data }) => {
-          localStorage.setItem(
-            "internlabs_token",
-            data.access_token
-          );
-
-          if (data.refresh_token) {
-            localStorage.setItem(
-              "internlabs_refresh_token",
-              data.refresh_token
-            );
-          }
-
-          return data.access_token;
-        })
-
-        .catch((refreshError) => {
-          localStorage.removeItem(
-            "internlabs_token"
-          );
-
-          localStorage.removeItem(
-            "internlabs_refresh_token"
-          );
-
-          localStorage.removeItem(
-            "internlabs_user"
-          );
-
-          throw refreshError;
-        })
-
-        .finally(() => {
-          isRefreshing = false;
-        });
-    }
-
-    const newAccessToken =
-      await refreshPromise;
-
-    originalRequest.headers.Authorization =
-      `Bearer ${newAccessToken}`;
-
-    return api(originalRequest);
-  }
-);
+[
+  api,
+  profileApi,
+  dashboardApi,
+  paymentApi,
+  startupApi,
+  invoiceApi,
+  contactApi,
+].forEach(attachTokenRefresh);
 
 
 export default api;

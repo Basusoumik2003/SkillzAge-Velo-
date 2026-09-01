@@ -31,7 +31,7 @@ export default function MentorHeader({
   studentAvatarUrl
 }) {
   return (
-    <header className="sticky top-0 z-30 flex shrink-0 items-center gap-3 border-b border-border bg-card/95 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/80 sm:px-4">
+    <header className="sticky top-0 z-30 flex shrink-0 items-center gap-3 border-b border-border bg-card/95 px-3 py-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-card/80 sm:px-4">
       <div className="flex min-w-0 items-center gap-2">
         <Avatar className="hidden h-9 w-9 border border-border sm:flex">
           {activeStageMentor?.avatar_url ? <AvatarImage src={activeStageMentor.avatar_url} alt="" /> : null}

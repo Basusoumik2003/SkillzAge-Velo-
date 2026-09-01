@@ -71,7 +71,15 @@ export default function StartupJourneyWorkspacePage() {
             Workspace
           </button>
 
-          <p className="mb-3 text-xs font-black uppercase tracking-wide text-slate-400">Journey</p>
+          <h1 className="text-3xl font-black text-slate-950">
+            {workspace.journey_name || "Startup Journey"}
+          </h1>
+
+          <p className="mt-2 text-sm font-semibold text-slate-500">
+            {workspace.journey_description || ""}
+          </p>
+
+          <p className="mb-3 mt-4 text-xs font-black uppercase tracking-wide text-slate-400">Journey</p>
 
           {journey.length ? (
             <div className="grid gap-2">

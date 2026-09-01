@@ -1,5 +1,7 @@
 "use client";
 
+import { motion } from "framer-motion";
+
 import { cn } from "@/lib/utils";
 
 export default function WorkspaceTabs({ tabs = [], activeKey, onChange, dataTour }) {
@@ -13,12 +15,19 @@ export default function WorkspaceTabs({ tabs = [], activeKey, onChange, dataTour
             type="button"
             onClick={() => onChange?.(tab.key)}
             className={cn(
-              "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
+              "relative rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
               active
-                ? "border-primary/30 bg-primary/10 text-primary shadow-sm"
+                ? "border-primary/30 text-primary"
                 : "border-border bg-muted/40 text-secondary hover:bg-muted"
             )}
           >
+            {active ? (
+              <motion.span
+                layoutId="workspace-tab-active"
+                className="absolute inset-0 -z-10 rounded-lg bg-primary/10 shadow-sm"
+                transition={{ type: "spring", stiffness: 500, damping: 35 }}
+              />
+            ) : null}
             {tab.label}
           </button>
         );
