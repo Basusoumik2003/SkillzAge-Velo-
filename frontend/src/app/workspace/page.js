@@ -17,6 +17,7 @@ function WorkspaceContent() {
     loading,
     workspaceError,
     workspaceClosed,
+    journeyNotSelected,
     showDisclaimer,
     handleDisclaimerAccept,
     showTour,
@@ -148,6 +149,41 @@ function WorkspaceContent() {
           "[WORKSPACE PROFILE] AUTH_USER received:",
           user
         );
+
+        // Capture the journey id even for a logged-out AUTH_USER (user === null),
+        // so a login round-trip through Wix does not lose the selected journey.
+        const authUserJourneyId = String(
+          data.journeyId ||
+          data.journey_id ||
+          user?.journeyId ||
+          user?.journey_id ||
+          ""
+        ).trim();
+
+        if (authUserJourneyId) {
+          try {
+            localStorage.setItem(
+              "internlabs_journey_id",
+              authUserJourneyId
+            );
+          } catch (error) {
+            console.warn(
+              "[WORKSPACE JOURNEY] Could not persist journey ID:",
+              error
+            );
+          }
+
+          window.dispatchEvent(
+            new CustomEvent("WORKSPACE_JOURNEY_UPDATED", {
+              detail: { journeyId: authUserJourneyId }
+            })
+          );
+
+          console.log(
+            "[WORKSPACE JOURNEY] ✅ Journey ID from AUTH_USER:",
+            authUserJourneyId
+          );
+        }
 
         if (!user) {
           console.error(
@@ -809,6 +845,28 @@ function WorkspaceContent() {
       <div className="grid h-screen place-items-center bg-background px-4">
         <div className="max-w-md rounded-2xl border border-destructive/30 bg-destructive/5 px-6 py-5 text-center text-sm font-semibold text-destructive">
           {workspaceError}
+        </div>
+      </div>
+    );
+  }
+
+  // =======================================================
+  // JOURNEY NOT SELECTED
+  // =======================================================
+  // No journey id could be resolved from the URL, the parent (Wix) page URL,
+  // a Wix message, or storage. Never silently load an arbitrary journey.
+
+  if (journeyNotSelected) {
+    return (
+      <div className="grid h-screen place-items-center bg-background px-4">
+        <div className="max-w-md space-y-2 rounded-2xl border border-border bg-card px-6 py-5 text-center">
+          <p className="text-sm font-semibold text-foreground">
+            Journey not selected
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Open your workspace from the Products page so we know which journey
+            to load.
+          </p>
         </div>
       </div>
     );

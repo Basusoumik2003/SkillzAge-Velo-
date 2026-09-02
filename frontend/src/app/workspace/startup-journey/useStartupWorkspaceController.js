@@ -30,6 +30,37 @@ const EMPTY_PROFILE = {
   industry_tags: ""
 };
 
+// Resolve the selected journey id the same way the embedded workspace does:
+// iframe URL -> parent (Wix) page URL -> localStorage. Never hardcoded.
+function resolveJourneyId() {
+  if (typeof window === "undefined") return "";
+  const clean = (value) => {
+    const raw = String(value ?? "").trim();
+    return /^\d+$/.test(raw) ? raw : "";
+  };
+  const fromQuery = (search) => {
+    try {
+      const params = new URLSearchParams(String(search || "").replace(/^\?/, ""));
+      return clean(params.get("journey_id") || params.get("journeyId") || "");
+    } catch {
+      return "";
+    }
+  };
+  let fromReferrer = "";
+  try {
+    fromReferrer = document.referrer ? fromQuery(new URL(document.referrer).search) : "";
+  } catch {
+    fromReferrer = "";
+  }
+  let fromStorage = "";
+  try {
+    fromStorage = clean(window.localStorage.getItem("internlabs_journey_id") || "");
+  } catch {
+    fromStorage = "";
+  }
+  return fromQuery(window.location.search) || fromReferrer || fromStorage || "";
+}
+
 function mapMessages(rows = []) {
   return rows.map((row) => ({
     role: row.role,
@@ -88,7 +119,15 @@ export default function useStartupWorkspaceController() {
     if (!ready) return;
     let cancelled = false;
     setLoading(true);
-    getStartupWorkspace()
+    const selectedJourneyId = resolveJourneyId();
+    if (selectedJourneyId) {
+      try {
+        window.localStorage.setItem("internlabs_journey_id", selectedJourneyId);
+      } catch {
+        // Storage may be unavailable inside a sandboxed iframe.
+      }
+    }
+    getStartupWorkspace(selectedJourneyId)
       .then((data) => {
         if (cancelled) return;
         setWorkspace({

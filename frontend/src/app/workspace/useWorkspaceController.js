@@ -593,6 +593,103 @@ function findPendingMentorRequest(messages = []) {
 
 const CHAT_CACHE_PREFIX = "internlabs_workspace_chat_cache::";
 
+// ======================================================
+// JOURNEY ID RESOLUTION
+// ======================================================
+//
+// The workspace is embedded as an iframe inside a Wix page. The Products page
+// navigates the *Wix* browser URL to /workspace?journey_id=<id>, but that query
+// string does NOT automatically appear on the iframe's own URL. So we resolve
+// the active journey id from every place it can legitimately show up:
+//
+//   1. the iframe URL query        (?journey_id / ?journeyId)
+//   2. the parent (Wix) page URL   (document.referrer query string)
+//   3. a Wix postMessage payload   (WORKSPACE_JOURNEY_UPDATED event detail)
+//   4. localStorage                (last known good value)
+//
+// No id is ever hardcoded. If none of these produce a value we surface a
+// "Journey not selected" state instead of silently loading an arbitrary one.
+
+const JOURNEY_ID_STORAGE_KEY = "internlabs_journey_id";
+
+function sanitizeJourneyId(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  // Journey ids are positive integers. Ignore anything else (e.g. "{}", "null").
+  return /^\d+$/.test(raw) ? raw : "";
+}
+
+function readJourneyIdFromQueryString(search) {
+  const raw = String(search || "").trim();
+  if (!raw) return "";
+  try {
+    const params = new URLSearchParams(
+      raw.startsWith("?") ? raw.slice(1) : raw
+    );
+    return sanitizeJourneyId(
+      params.get("journey_id") || params.get("journeyId") || ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+// The Wix page URL (which does carry ?journey_id=<id>) is the iframe's referrer.
+function readJourneyIdFromReferrer() {
+  if (typeof document === "undefined") return "";
+  try {
+    const referrer = document.referrer || "";
+    if (!referrer) return "";
+    const url = new URL(referrer);
+    return readJourneyIdFromQueryString(url.search);
+  } catch {
+    return "";
+  }
+}
+
+function readStoredJourneyId() {
+  if (typeof window === "undefined") return "";
+  try {
+    return sanitizeJourneyId(
+      window.localStorage.getItem(JOURNEY_ID_STORAGE_KEY) || ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+function persistJourneyId(value) {
+  const clean = sanitizeJourneyId(value);
+  if (!clean || typeof window === "undefined") return clean;
+  try {
+    window.localStorage.setItem(JOURNEY_ID_STORAGE_KEY, clean);
+  } catch {
+    // Storage can be unavailable inside a sandboxed iframe - not fatal.
+  }
+  return clean;
+}
+
+// Priority: explicit event payload -> iframe URL -> parent URL -> localStorage.
+function resolveClientJourneyId({ searchParams, eventDetail } = {}) {
+  const fromEvent = sanitizeJourneyId(
+    eventDetail?.journeyId || eventDetail?.journey_id || ""
+  );
+
+  const fromUrl = sanitizeJourneyId(
+    searchParams?.get?.("journey_id") ||
+    searchParams?.get?.("journeyId") ||
+    ""
+  ) || (typeof window !== "undefined"
+    ? readJourneyIdFromQueryString(window.location.search)
+    : "");
+
+  const fromReferrer = readJourneyIdFromReferrer();
+
+  const fromStorage = readStoredJourneyId();
+
+  return fromEvent || fromUrl || fromReferrer || fromStorage || "";
+}
+
 function createClientMessageId() {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -651,13 +748,16 @@ export default function useWorkspaceController() {
   const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceClosed, setWorkspaceClosed] = useState({ closed: false, message: "" });
   const [projectName, setProjectName] = useState("");
-  const [startupJourneyId, setStartupJourneyId] = useState(() => {
-    if (typeof window === "undefined") return "";
-
-    return String(
-      window.localStorage.getItem("internlabs_journey_id") || ""
-    ).trim();
-  });
+  // The active journey id is the single source of truth for which journey the
+  // workspace loads. Seed it synchronously from every client-side source so the
+  // very first render already knows which journey was picked on the Products
+  // page (see resolveClientJourneyId).
+  const [startupJourneyId, setStartupJourneyId] = useState(() =>
+    resolveClientJourneyId()
+  );
+  // True only when NO journey id can be resolved from any source. Drives the
+  // explicit "Journey not selected" screen instead of a silent default.
+  const [journeyNotSelected, setJourneyNotSelected] = useState(false);
 
   const [chatLoading, setChatLoading] = useState(false);
   const [chatServiceAvailable, setChatServiceAvailable] = useState(true);
@@ -711,6 +811,13 @@ export default function useWorkspaceController() {
   const documentUploadInputRef = useRef(null);
   const chatCacheHydratedProjectRef = useRef("");
   const tourLaunchScheduledRef = useRef(false);
+  // Mirror of workspaceMode readable inside effects without adding it as a
+  // dependency (which would re-trigger the startup-journey load on every mode
+  // change).
+  const workspaceModeRef = useRef(workspaceMode);
+  useEffect(() => {
+    workspaceModeRef.current = workspaceMode;
+  }, [workspaceMode]);
 
   const methodTotalSteps = useMemo(() => {
     if (!catalogProject?.steps?.length) return 0;
@@ -741,58 +848,30 @@ export default function useWorkspaceController() {
       return undefined;
     }
 
+    // Resolves the active journey id from the iframe URL, the parent (Wix) page
+    // URL, a Wix postMessage payload, or localStorage - in that priority order.
+    // The Wix iframe currently sends the journey through the postMessage
+    // payload, not necessarily through the iframe URL, which is why the iframe's
+    // own URL query can log as {} while Wix still knows the journey is 5.
     const syncJourneyId = (event) => {
-      // The Wix iframe currently sends the journey through the postMessage
-      // payload, not necessarily through the iframe URL. That is why the Wix
-      // console can show journey 5 while the iframe URL itself shows {}.
-      const eventJourneyId = String(
-        event?.detail?.journeyId ||
-        event?.detail?.journey_id ||
-        ""
-      ).trim();
-
-      const urlJourneyId = String(
-        searchParams?.get("journey_id") ||
-        searchParams?.get("journeyId") ||
-        ""
-      ).trim();
-
-      const storedJourneyId = String(
-        window.localStorage.getItem(
-          "internlabs_journey_id"
-        ) || ""
-      ).trim();
-
-      // Priority:
-      // 1. New Wix message
-      // 2. URL
-      // 3. Existing localStorage
-      const nextJourneyId =
-        eventJourneyId ||
-        urlJourneyId ||
-        storedJourneyId;
+      const nextJourneyId = resolveClientJourneyId({
+        searchParams,
+        eventDetail: event?.detail
+      });
 
       if (!nextJourneyId) {
         console.warn(
-          "[WORKSPACE JOURNEY] No journey ID available"
+          "[WORKSPACE JOURNEY] No journey ID available from URL, parent URL, Wix message or storage"
         );
 
         return;
       }
 
-      try {
-        window.localStorage.setItem(
-          "internlabs_journey_id",
-          nextJourneyId
-        );
-      } catch (error) {
-        console.warn(
-          "[WORKSPACE JOURNEY] Could not persist journey ID:",
-          error
-        );
-      }
+      persistJourneyId(nextJourneyId);
 
-      setStartupJourneyId(nextJourneyId);
+      setStartupJourneyId((prev) =>
+        prev === nextJourneyId ? prev : nextJourneyId
+      );
 
       console.log(
         "[WORKSPACE JOURNEY] ✅ Active journey ID:",
@@ -806,6 +885,19 @@ export default function useWorkspaceController() {
       "WORKSPACE_JOURNEY_UPDATED",
       syncJourneyId
     );
+
+    // Ask the Wix parent to (re)send the selected journey id. Harmless if the
+    // parent does not handle it - the other sources above still apply.
+    if (window.parent && window.parent !== window) {
+      try {
+        window.parent.postMessage(
+          { type: "WORKSPACE_REQUEST_JOURNEY_ID" },
+          "*"
+        );
+      } catch {
+        // Cross-origin restrictions - ignore.
+      }
+    }
 
     return () => {
       window.removeEventListener(
@@ -867,6 +959,11 @@ export default function useWorkspaceController() {
     let cancelled = false;
     async function loadMentors() {
       if (!authReady || !projectName) return;
+      // In startup-journey mode the mentor roster is derived from the journey's
+      // own phase/stage data (see the startup-journey load effect) and must not
+      // be overwritten here - the /admin/startup/mentors endpoint is admin-only
+      // and 403s for normal students, which would blank the roster.
+      if (catalogProject?.journey_id) return;
       try {
         const isStartupJourney = String(projectName).trim().toLowerCase() === "startup journey";
         const data = isStartupJourney ? await getStartupMentors() : await getDashboardMentors();
@@ -895,7 +992,7 @@ export default function useWorkspaceController() {
     return () => {
       cancelled = true;
     };
-  }, [authReady, projectName]);
+  }, [authReady, projectName, catalogProject?.journey_id]);
 
 
   useEffect(() => {
@@ -911,15 +1008,9 @@ export default function useWorkspaceController() {
         // 1. RESOLVE JOURNEY ID
         // ==================================================
 
-        const selectedJourneyId = String(
-          startupJourneyId ||
-          searchParams?.get("journey_id") ||
-          searchParams?.get("journeyId") ||
-          localStorage.getItem(
-            "internlabs_journey_id"
-          ) ||
-          ""
-        ).trim();
+        const selectedJourneyId =
+          sanitizeJourneyId(startupJourneyId) ||
+          resolveClientJourneyId({ searchParams });
 
         console.log(
           "======================================"
@@ -939,25 +1030,33 @@ export default function useWorkspaceController() {
         );
 
         if (!selectedJourneyId) {
+          // No id anywhere - do NOT silently load an arbitrary journey.
+          // Only surface the "not selected" screen when there is also no
+          // internship project to fall back to (workspaceMode === "demo" means
+          // boot() found no dashboard project for this user). An internship
+          // user with a real project keeps their normal workspace untouched.
           console.warn(
-            "[WORKSPACE JOURNEY] No journey ID supplied"
+            "[WORKSPACE JOURNEY] No journey ID supplied from any source"
           );
 
+          if (!cancelled && workspaceModeRef.current !== "backend") {
+            setJourneyNotSelected(true);
+            setLoading(false);
+            setReady(true);
+          }
+
           return;
+        }
+
+        if (!cancelled) {
+          setJourneyNotSelected(false);
         }
 
         // ==================================================
         // 2. PERSIST JOURNEY ID
         // ==================================================
 
-        try {
-          localStorage.setItem(
-            "internlabs_journey_id",
-            selectedJourneyId
-          );
-        } catch {
-          // Ignore storage failure.
-        }
+        persistJourneyId(selectedJourneyId);
 
         // ==================================================
         // 3. LOAD WORKSPACE DIRECTLY FOR THAT JOURNEY
@@ -998,6 +1097,14 @@ export default function useWorkspaceController() {
             selectedJourneyId
           );
 
+          if (!cancelled) {
+            setWorkspaceError(
+              `Journey ${selectedJourneyId} has no phases configured yet. Please contact your program administrator.`
+            );
+            setLoading(false);
+            setReady(true);
+          }
+
           return;
         }
 
@@ -1005,22 +1112,15 @@ export default function useWorkspaceController() {
         // 5. RESOLVE ACTUAL JOURNEY ID
         // ==================================================
 
-        const resolvedJourneyId = String(
-          data?.journey_id ||
-          selectedJourneyId
-        ).trim();
+        const resolvedJourneyId =
+          sanitizeJourneyId(data?.journey_id) || selectedJourneyId;
 
         if (resolvedJourneyId) {
-          try {
-            localStorage.setItem(
-              "internlabs_journey_id",
-              resolvedJourneyId
-            );
-          } catch {
-            // Ignore storage failure.
-          }
+          persistJourneyId(resolvedJourneyId);
 
-          setStartupJourneyId(resolvedJourneyId);
+          setStartupJourneyId((prev) =>
+            prev === resolvedJourneyId ? prev : resolvedJourneyId
+          );
         }
 
         // ==================================================
@@ -1242,9 +1342,13 @@ export default function useWorkspaceController() {
 
         setWorkspaceMode("backend");
         setWorkspaceError("");
+        setJourneyNotSelected(false);
         setWorkspaceClosed({ closed: false, message: "" });
         setCatalogProject(startupProject);
-        setProjectName(resolvedJourneyName);
+        // projectName stays the "Startup Journey" sentinel that the mentor-load
+        // and catalog-load effects key off. The human-readable journey name is
+        // carried on catalogProject (title / journey_name) for display.
+        setProjectName("Startup Journey");
         setMethodState({
           current_step: 1,
           tasks: startupProject.steps.map(
@@ -3274,6 +3378,8 @@ export default function useWorkspaceController() {
     loading,
     workspaceError,
     workspaceClosed,
+    journeyNotSelected,
+    startupJourneyId,
     projectName,
 
     // chat / mentor state

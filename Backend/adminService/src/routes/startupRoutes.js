@@ -341,11 +341,17 @@ function annotateJourneyProgress(journeyPhases, completedStageIds) {
 /** Resolves which journeys row a student's workspace/query should use:
  * their own explicit pick -> the journey marked is_default -> the first
  * active journey by id -> null (nothing configured at all). */
-async function resolveEffectiveJourneyId(profile) {
+async function resolveEffectiveJourneyId(profile, { allowFirstActiveFallback = true } = {}) {
   if (profile?.journey_id) return profile.journey_id;
 
   const defaultRow = await pool.query("SELECT id FROM journeys WHERE is_default = TRUE LIMIT 1");
   if (defaultRow.rows[0]?.id) return defaultRow.rows[0].id;
+
+  // The "first active journey by id" pick is a convenience for callers that
+  // must always have *some* journey (e.g. /query). The workspace load opts out
+  // of it (allowFirstActiveFallback: false) so a missing selection surfaces as
+  // an explicit "journey not selected" state instead of an arbitrary journey.
+  if (!allowFirstActiveFallback) return null;
 
   const firstActive = await pool.query("SELECT id FROM journeys WHERE is_active = TRUE ORDER BY id ASC LIMIT 1");
   return firstActive.rows[0]?.id || null;
@@ -761,7 +767,34 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
     const journeyId =
       Number.isFinite(requestedJourneyId) && requestedJourneyId > 0
         ? requestedJourneyId
-        : await resolveEffectiveJourneyId(profile);
+        : await resolveEffectiveJourneyId(profile, {
+            // No arbitrary "first active journey" pick here - a missing
+            // selection must surface as an explicit not-selected state.
+            allowFirstActiveFallback: false
+          });
+
+    // Nothing selected and no default configured: return an empty, explicit
+    // response instead of loading phases from every journey at once.
+    if (!journeyId) {
+      return res.json({
+        profile,
+        journey_id: null,
+        journey: [],
+        journey_info: null,
+        journey_name: "",
+        journey_description: "",
+        journey_objective: "",
+        active_phase: null,
+        active_stage: null,
+        session_id: null,
+        context: {
+          stage_documents: [],
+          knowledge_sources: [],
+          recent_messages: [],
+          memory_summaries: []
+        }
+      });
+    }
     // The selected journey's own metadata (name/description/objective). Resolved
     // from journeyId above - which is the requested journey, the student's
     // picked journey (student_profiles.journey_id) or the default - not "the
