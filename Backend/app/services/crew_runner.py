@@ -64,11 +64,17 @@ def _build_task_description(context: dict[str, Any]) -> str:
     sections.append(f"You are mentoring {student_name} in a startup journey conversation.")
 
     if profile:
+        def _fmt(value, fallback):
+            if isinstance(value, (list, tuple)):
+                joined = ", ".join(str(v).strip() for v in value if str(v).strip())
+                return joined or fallback
+            return value or fallback
+
         profile_lines = [
             f"Startup stage: {profile.get('startup_stage') or 'unknown'}",
-            f"Goal type: {profile.get('goal_type') or 'unknown'}",
-            f"Skills: {profile.get('skills') or 'not provided'}",
-            f"Interests: {profile.get('interests') or 'not provided'}",
+            f"Goals: {_fmt(profile.get('goal_type'), 'unknown')}",
+            f"Skills: {_fmt(profile.get('skills'), 'not provided')}",
+            f"Interests: {_fmt(profile.get('interests'), 'not provided')}",
             f"Available time: {profile.get('available_time_hours_per_week') or 0} hours/week",
         ]
         sections.append("STUDENT PROFILE:\n" + "\n".join(profile_lines))

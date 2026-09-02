@@ -230,9 +230,14 @@ function attachTokenRefresh(instance) {
 
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
-    const token = localStorage.getItem(
-      "internlabs_token"
-    );
+    // The unprefixed `api` instance is used both by students (internlabs_token)
+    // and by the admin panel, which only holds an admin token. Prefer the
+    // student token, fall back to the admin token so admin-only endpoints
+    // (e.g. /deliverables/admin/*) still authenticate.
+    const token =
+      localStorage.getItem("internlabs_token") ||
+      localStorage.getItem("skillzage_admin_token") ||
+      localStorage.getItem("internlabs_admin_token");
 
     if (token) {
       config.headers.Authorization =

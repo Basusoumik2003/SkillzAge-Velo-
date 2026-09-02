@@ -422,7 +422,7 @@ async function getCurrentProfile(userId) {
             si.industry_tags,
             si.idea_status,
             si.is_primary
-     FROM student_profiles sp
+     FROM user_profiles sp
      LEFT JOIN startup_ideas si
        ON si.profile_id = sp.id
       AND si.is_primary = TRUE
@@ -634,10 +634,12 @@ function buildMentorSystemPrompt({ mentor, phase, stage, profile, context, webRe
       [
         "Student profile:",
         profile.startup_stage ? `Startup stage: ${String(profile.startup_stage).replaceAll("_", " ")}` : "",
-        profile.goal_type ? `Goal type: ${profile.goal_type}` : "",
+        Array.isArray(profile.goals) && profile.goals.length
+          ? `Goals: ${profile.goals.join(", ")}`
+          : (profile.goal_type ? `Goal type: ${profile.goal_type}` : ""),
         profile.idea_title ? `Idea: ${profile.idea_title}` : "",
         profile.problem_statement ? `Problem statement: ${profile.problem_statement}` : "",
-        profile.preferred_language ? `Preferred language: ${profile.preferred_language}` : ""
+        profile.current_idea ? `Current idea: ${profile.current_idea}` : ""
       ]
         .filter(Boolean)
         .join("\n")
@@ -755,7 +757,7 @@ async function upsertSessionMemory({ sessionId, userId, profileId, ideaId, phase
 router.get("/startup/workspace", requireAuth, async (req, res, next) => {
   try {
     const userId = req.auth.userId;
-    const profile = await getCurrentProfile(userId);
+    let profile = await getCurrentProfile(userId);
     // The Products card tells us exactly which journey the user picked and
     // sends it as ?journey_id=<id>. Honour that first so a brand-new user with
     // no student_profiles row can still open the selected journey. Fall back to
@@ -772,6 +774,28 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
             // selection must surface as an explicit not-selected state.
             allowFirstActiveFallback: false
           });
+
+    // Ensure the student has a user_profiles row (and record the picked
+    // journey on it). The mentor chat endpoint (Python /chat/) returns
+    // "Please select a project first" when this row is missing, which the
+    // workspace surfaces as "Mentor offline" - so a card-click straight into
+    // the workspace must create it, not wait for the profile form.
+    try {
+      await pool.query(
+        `INSERT INTO user_profiles (user_id, journey_id)
+         VALUES ($1, $2)
+         ON CONFLICT (user_id)
+         DO UPDATE SET journey_id = COALESCE($2, user_profiles.journey_id),
+                       updated_at = NOW()`,
+        [userId, journeyId || null]
+      );
+      if (!profile) {
+        profile = await getCurrentProfile(userId);
+      }
+    } catch (profileError) {
+      // Non-fatal: the workspace can still render read-only.
+      console.error("[startup/workspace] could not ensure student profile:", profileError);
+    }
 
     // Nothing selected and no default configured: return an empty, explicit
     // response instead of loading phases from every journey at once.
@@ -824,7 +848,7 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
       ideaId: profile?.idea_id || null,
       phaseId: activePhase?.id || null,
       stageId: activeStage?.id || null,
-      question: profile?.current_idea_text || ""
+      question: profile?.current_idea || profile?.current_idea_text || ""
     });
 
     res.json({
@@ -852,6 +876,91 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
       active_stage: activeStage,
       session_id: sessionId,
       context
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Marks one journey stage complete for the current student so the workspace
+ * resumes from the right place next time. Writes the same `student_stage_progress`
+ * row shape as the Python `mark_stage_complete` (status='completed',
+ * progress_percent=100) — that one also builds an LLM "what happened so far"
+ * summary on deliverable approval; this lightweight path (manual "mark stage
+ * complete" in the workspace) just records completion. Idempotent.
+ */
+router.post("/startup/stages/:stageId/complete", requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.auth.userId;
+    const stageId = normalizeInteger(req.params.stageId, null);
+    if (!stageId) {
+      return res.status(400).json({ detail: "A valid stage id is required." });
+    }
+
+    const stageRow = (
+      await pool.query(
+        "SELECT id, phase_id FROM journey_stages WHERE id = $1 LIMIT 1",
+        [stageId]
+      )
+    ).rows[0];
+    if (!stageRow) {
+      return res.status(404).json({ detail: "Stage not found." });
+    }
+    const phaseId = stageRow.phase_id || null;
+
+    // Fetch-or-create the user_profiles row (mirrors ensure_student_profile).
+    let profileId =
+      (
+        await pool.query(
+          "SELECT id FROM user_profiles WHERE user_id = $1 LIMIT 1",
+          [userId]
+        )
+      ).rows[0]?.id || null;
+    if (!profileId) {
+      profileId =
+        (
+          await pool.query(
+            "INSERT INTO user_profiles (user_id) VALUES ($1) RETURNING id",
+            [userId]
+          )
+        ).rows[0]?.id || null;
+    }
+
+    const existing = (
+      await pool.query(
+        "SELECT id FROM student_stage_progress WHERE user_id = $1 AND stage_id = $2 LIMIT 1",
+        [userId, stageId]
+      )
+    ).rows[0];
+
+    if (existing) {
+      await pool.query(
+        `UPDATE student_stage_progress
+         SET status = 'completed',
+             progress_percent = 100,
+             completed_at = NOW(),
+             phase_id = COALESCE($2, phase_id),
+             profile_id = COALESCE(profile_id, $3),
+             updated_at = NOW()
+         WHERE id = $1`,
+        [existing.id, phaseId, profileId]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO student_stage_progress
+           (user_id, profile_id, phase_id, stage_id, status, progress_percent, started_at, completed_at)
+         VALUES ($1, $2, $3, $4, 'completed', 100, NOW(), NOW())`,
+        [userId, profileId, phaseId, stageId]
+      );
+    }
+
+    const completedStageIds = await fetchCompletedStageIds(userId);
+    res.json({
+      success: true,
+      stage_id: stageId,
+      phase_id: phaseId,
+      completed_stage_ids: [...completedStageIds]
     });
   } catch (error) {
     next(error);
@@ -901,83 +1010,95 @@ router.get("/startup/profile", requireAuth, async (req, res, next) => {
 router.post("/startup/profile", requireAuth, async (req, res, next) => {
   try {
     const userId = req.auth.userId;
+    const toStringArray = (value) => {
+      if (Array.isArray(value)) {
+        return value.map((item) => String(item || "").trim()).filter(Boolean);
+      }
+      return String(value || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    };
+    const toBool = (value) =>
+      value === true || value === "true" || value === 1 || value === "1";
+
     const age = normalizeInteger(req.body?.age, null);
-    const educationLevel = normalizeText(req.body?.education_level || req.body?.educationLevel, 80);
-    const locationText = normalizeText(req.body?.location_text || req.body?.locationText, 160);
-    const country = normalizeText(req.body?.country, 80);
-    const stateRegion = normalizeText(req.body?.state_region || req.body?.stateRegion, 120);
-    const city = normalizeText(req.body?.city, 120);
-    const skills = normalizeText(req.body?.skills, 4000);
-    const interests = normalizeText(req.body?.interests, 4000);
-    const availableTimeHoursPerWeek = Math.max(0, normalizeInteger(req.body?.available_time_hours_per_week || req.body?.availableTimeHoursPerWeek, 0));
-    const availableResources = normalizeText(req.body?.available_resources || req.body?.availableResources, 4000);
-    const participationMode = normalizeText(req.body?.participation_mode || req.body?.participationMode, 20) || "individual";
-    const currentIdeaText = normalizeText(req.body?.current_idea_text || req.body?.currentIdeaText, 12000);
-    const startupStage = normalizeText(req.body?.startup_stage || req.body?.startupStage, 30) || "no_idea";
-    const preferredLanguage = normalizeText(req.body?.preferred_language || req.body?.preferredLanguage, 20) || "english";
-    const goalType = normalizeText(req.body?.goal_type || req.body?.goalType, 40) || "commercial";
-    const profileSummary = normalizeText(req.body?.profile_summary || req.body?.profileSummary, 12000);
-    const readinessScore = Math.max(0, Math.min(100, normalizeInteger(req.body?.readiness_score || req.body?.readinessScore, 0)));
+    const educationLevel = normalizeText(req.body?.education_level || req.body?.educationLevel, 100);
+    const country = normalizeText(req.body?.country, 100);
+    const state = normalizeText(req.body?.state || req.body?.state_region || req.body?.stateRegion, 100);
+    const city = normalizeText(req.body?.city, 100);
+    const skills = toStringArray(req.body?.skills);
+    const interests = toStringArray(req.body?.interests);
+    const availableHoursPerWeek = Math.max(
+      0,
+      Number(req.body?.available_hours_per_week || req.body?.available_time_hours_per_week || req.body?.availableTimeHoursPerWeek) || 0
+    );
+    const hasLaptop = toBool(req.body?.has_laptop);
+    const hasInternet = toBool(req.body?.has_internet);
+    const hasTeam = toBool(req.body?.has_team);
+    const hasFunding = toBool(req.body?.has_funding);
+    const participation = normalizeText(req.body?.participation || req.body?.participation_mode || req.body?.participationMode, 20) || "individual";
+    const currentIdea = normalizeText(req.body?.current_idea || req.body?.current_idea_text || req.body?.currentIdea, 12000);
+    const startupStage = normalizeText(req.body?.startup_stage || req.body?.startupStage, 50) || "no_idea";
+    const goals = toStringArray(req.body?.goals || req.body?.goal_type || req.body?.goalType);
 
     const profileRes = await pool.query(
-      `INSERT INTO student_profiles (
-        user_id, age, education_level, location_text, country, state_region, city,
-        skills, interests, available_time_hours_per_week, available_resources,
-        participation_mode, current_idea_text, startup_stage, preferred_language,
-        goal_type, profile_summary, readiness_score, updated_at
+      `INSERT INTO user_profiles (
+        user_id, age, education_level, country, state, city,
+        skills, interests, available_hours_per_week,
+        has_laptop, has_internet, has_team, has_funding,
+        participation, current_idea, startup_stage, goals, updated_at
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11,
-        $12, $13, $14, $15,
-        $16, $17, $18, NOW()
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9,
+        $10, $11, $12, $13,
+        $14, $15, $16, $17, NOW()
       )
       ON CONFLICT (user_id) DO UPDATE SET
         age = EXCLUDED.age,
         education_level = EXCLUDED.education_level,
-        location_text = EXCLUDED.location_text,
         country = EXCLUDED.country,
-        state_region = EXCLUDED.state_region,
+        state = EXCLUDED.state,
         city = EXCLUDED.city,
         skills = EXCLUDED.skills,
         interests = EXCLUDED.interests,
-        available_time_hours_per_week = EXCLUDED.available_time_hours_per_week,
-        available_resources = EXCLUDED.available_resources,
-        participation_mode = EXCLUDED.participation_mode,
-        current_idea_text = EXCLUDED.current_idea_text,
+        available_hours_per_week = EXCLUDED.available_hours_per_week,
+        has_laptop = EXCLUDED.has_laptop,
+        has_internet = EXCLUDED.has_internet,
+        has_team = EXCLUDED.has_team,
+        has_funding = EXCLUDED.has_funding,
+        participation = EXCLUDED.participation,
+        current_idea = EXCLUDED.current_idea,
         startup_stage = EXCLUDED.startup_stage,
-        preferred_language = EXCLUDED.preferred_language,
-        goal_type = EXCLUDED.goal_type,
-        profile_summary = EXCLUDED.profile_summary,
-        readiness_score = EXCLUDED.readiness_score,
+        goals = EXCLUDED.goals,
         updated_at = NOW()
       RETURNING *`,
       [
         userId,
         age,
         educationLevel,
-        locationText,
         country,
-        stateRegion,
+        state,
         city,
         skills,
         interests,
-        availableTimeHoursPerWeek,
-        availableResources,
-        participationMode,
-        currentIdeaText,
+        availableHoursPerWeek,
+        hasLaptop,
+        hasInternet,
+        hasTeam,
+        hasFunding,
+        participation,
+        currentIdea,
         startupStage,
-        preferredLanguage,
-        goalType,
-        profileSummary,
-        readinessScore
+        goals
       ]
     );
 
     const profile = profileRes.rows[0];
     let idea = null;
 
-    if (normalizeText(req.body?.idea_title || req.body?.ideaTitle, 180) || currentIdeaText) {
+    if (normalizeText(req.body?.idea_title || req.body?.ideaTitle, 180) || currentIdea) {
       const ideaRes = await pool.query(
       `INSERT INTO startup_ideas (
           user_id, profile_id, idea_title, problem_statement, solution_summary,
@@ -1001,7 +1122,7 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
           userId,
           profile.id,
           normalizeText(req.body?.idea_title || req.body?.ideaTitle, 180) || "My startup idea",
-          normalizeText(req.body?.problem_statement || req.body?.problemStatement || currentIdeaText, 12000),
+          normalizeText(req.body?.problem_statement || req.body?.problemStatement || currentIdea, 12000),
           normalizeText(req.body?.solution_summary || req.body?.solutionSummary, 12000),
           normalizeText(req.body?.target_users || req.body?.targetUsers, 4000),
           normalizeText(req.body?.industry_tags || req.body?.industryTags, 4000)
@@ -1044,15 +1165,15 @@ router.post("/startup/journey/select", requireAuth, async (req, res, next) => {
       return res.status(404).json({ detail: "Journey not found." });
     }
 
+    // Upsert - picking a journey is allowed before the profile form is filled.
     const result = await pool.query(
-      `UPDATE student_profiles SET journey_id = $2, updated_at = NOW()
-       WHERE user_id = $1
+      `INSERT INTO user_profiles (user_id, journey_id)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id)
+       DO UPDATE SET journey_id = $2, updated_at = NOW()
        RETURNING *`,
       [userId, journeyId]
     );
-    if (!result.rows.length) {
-      return res.status(404).json({ detail: "Complete your profile before selecting a journey." });
-    }
 
     res.json({ profile: result.rows[0], journey: journeyRow.rows[0] });
   } catch (error) {

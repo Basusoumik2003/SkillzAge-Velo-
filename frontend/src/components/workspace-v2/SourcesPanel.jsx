@@ -59,16 +59,32 @@ export default function SourcesPanel({
           signal: controller.signal,
         });
 
-        const data = await response.json();
+        // The response is not always JSON - when the search service is down the
+        // proxy returns a plain "Internal Server Error" string, so parse
+        // defensively instead of letting JSON.parse throw a cryptic
+        // "Unexpected token" error into the panel.
+        const raw = await response.text();
+        let data = {};
+        try {
+          data = raw ? JSON.parse(raw) : {};
+        } catch {
+          data = {};
+        }
 
         if (!response.ok) {
-          throw new Error(data.error || "Unable to load search results");
+          throw new Error(
+            data.error || "Web research is unavailable right now."
+          );
         }
 
         setResults(Array.isArray(data.results) ? data.results : []);
       } catch (searchError) {
         if (searchError.name !== "AbortError") {
-          setError(searchError.message);
+          setError(
+            searchError.message === "Failed to fetch"
+              ? "Web research is unavailable right now."
+              : searchError.message
+          );
           setResults([]);
         }
       } finally {

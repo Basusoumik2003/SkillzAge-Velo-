@@ -20,16 +20,19 @@ from app.db.models import StudentStageProgress
 
 
 def ensure_student_profile(db: Session, user_id) -> object:
-    """Fetch or create the user's student_profiles row, returning its id."""
+    """Fetch or create the user's user_profiles row, returning its id.
+
+    The Wix profile form writes public.user_profiles; the startup-journey code
+    reads/writes the same table (see migration 2026-09-02_01)."""
     row = db.execute(
-        text("SELECT id FROM student_profiles WHERE user_id = :user_id LIMIT 1"),
+        text("SELECT id FROM user_profiles WHERE user_id = :user_id LIMIT 1"),
         {"user_id": user_id},
     ).first()
     if row:
         return row[0]
 
     row = db.execute(
-        text("INSERT INTO student_profiles (user_id) VALUES (:user_id) RETURNING id"),
+        text("INSERT INTO user_profiles (user_id) VALUES (:user_id) RETURNING id"),
         {"user_id": user_id},
     ).first()
     db.commit()

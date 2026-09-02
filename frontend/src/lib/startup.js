@@ -48,6 +48,27 @@ export async function listStartupJourneys() {
 }
 
 // ======================================================
+// STUDENT - MARK JOURNEY STAGE COMPLETE
+// ======================================================
+//
+// Persists completion to student_stage_progress so the workspace resumes from
+// the right stage on the next visit. Idempotent.
+
+export async function markStartupStageComplete(stageId) {
+  const normalizedStageId = Number(stageId);
+
+  if (!Number.isFinite(normalizedStageId) || normalizedStageId <= 0) {
+    throw new Error("Invalid stage id.");
+  }
+
+  const { data } = await startupApi.post(
+    `/stages/${normalizedStageId}/complete`
+  );
+
+  return data;
+}
+
+// ======================================================
 // STUDENT - SELECT JOURNEY
 // ======================================================
 

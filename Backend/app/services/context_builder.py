@@ -261,10 +261,15 @@ def _student_profile(db: Session | None, user_id) -> dict:
     row = db.execute(
         text(
             """
-            SELECT age, education_level, location_text, country, state_region, city, skills, interests,
-                   available_time_hours_per_week, available_resources, participation_mode, current_idea_text,
-                   startup_stage, preferred_language, goal_type, profile_summary, readiness_score
-            FROM student_profiles
+            SELECT age, education_level, country, state AS state_region, city,
+                   skills, interests,
+                   available_hours_per_week AS available_time_hours_per_week,
+                   participation AS participation_mode,
+                   current_idea AS current_idea_text,
+                   startup_stage,
+                   goals AS goal_type,
+                   has_laptop, has_internet, has_team, has_funding
+            FROM user_profiles
             WHERE user_id = :user_id
             LIMIT 1
             """
@@ -289,7 +294,26 @@ def _primary_startup_idea(db: Session | None, user_id) -> dict | None:
         ),
         {"user_id": user_id},
     ).mappings().first()
-    return dict(row) if row else None
+    if row:
+        return dict(row)
+
+    # No rich startup_ideas row - fall back to the free-text idea captured on
+    # the profile form (user_profiles.current_idea).
+    fallback = db.execute(
+        text("SELECT current_idea FROM user_profiles WHERE user_id = :user_id LIMIT 1"),
+        {"user_id": user_id},
+    ).first()
+    if fallback and str(fallback[0] or "").strip():
+        return {
+            "id": None,
+            "idea_title": "Student idea",
+            "problem_statement": str(fallback[0]).strip(),
+            "solution_summary": "",
+            "target_users": "",
+            "industry_tags": "",
+            "idea_status": "draft",
+        }
+    return None
 
 
 def _startup_project_tasks(db: Session | None) -> list[str]:

@@ -53,13 +53,30 @@ def get_current_user(
             detail="Missing authorization token.",
         )
 
+    # The Node auth service (Backend/Skillzage-auth) and the Wix member-sync
+    # backend sign tokens with the shared HS256 secret but WITHOUT `aud`/`iss`
+    # claims. python-jose rejects a token that lacks a claim we ask it to
+    # verify, so only enforce aud/iss when the token actually carries them
+    # (defence in depth) - the shared secret + the gateway boundary is the
+    # real trust check.
+    try:
+        unverified = jwt.get_unverified_claims(credentials.credentials)
+    except JWTError:
+        unverified = {}
+
+    decode_kwargs: dict = {"algorithms": ["HS256"]}
+    if settings.jwt_audience and unverified.get("aud"):
+        decode_kwargs["audience"] = settings.jwt_audience
+    else:
+        decode_kwargs["options"] = {"verify_aud": False}
+    if settings.jwt_issuer and unverified.get("iss"):
+        decode_kwargs["issuer"] = settings.jwt_issuer
+
     try:
         payload = jwt.decode(
             credentials.credentials,
             settings.jwt_secret_key,
-            algorithms=["HS256"],
-            audience=settings.jwt_audience or None,
-            issuer=settings.jwt_issuer or None,
+            **decode_kwargs,
         )
     except JWTError:
         raise HTTPException(

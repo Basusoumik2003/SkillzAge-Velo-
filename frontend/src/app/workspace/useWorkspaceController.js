@@ -7,7 +7,8 @@ import { getMentorChatHistory, reviewStageDocument, saveLocalChatMessage, sendMe
 import {
   getStartupMentors,
   getStartupWorkspace,
-  listStartupJourneys
+  listStartupJourneys,
+  markStartupStageComplete
 } from "@/lib/startup";
 import {
   completeDashboardTask,
@@ -1276,6 +1277,7 @@ export default function useWorkspaceController() {
           journey_description: resolvedJourneyDescription,
           description: resolvedJourneyDescription,
           steps: data.journey.map((phase) => ({
+            id: phase?.id ?? null,
             title:
               phase?.phase_name ||
               phase?.phase_key ||
@@ -1303,6 +1305,10 @@ export default function useWorkspaceController() {
               phase?.timeline_unit ||
               "week",
             stages: (phase?.stages || []).map((stage) => ({
+              id: stage?.id ?? null,
+              phase_id: stage?.phase_id ?? phase?.id ?? null,
+              is_completed: Boolean(stage?.is_completed),
+              is_unlocked: stage?.is_unlocked !== false,
               title:
                 stage?.stage_name ||
                 stage?.stage_key ||
@@ -1337,7 +1343,59 @@ export default function useWorkspaceController() {
         };
 
         // ==================================================
-        // 11. UPDATE REACT STATE
+        // 11. RESTORE SAVED PROGRESS (RESUME WHERE LEFT OFF)
+        // ==================================================
+        //
+        // The backend annotates every stage with is_completed (from
+        // student_stage_progress). Rebuild the local progress maps from it and
+        // land the student on their first still-open stage instead of Phase 1.
+
+        const PROGRESS_PROJECT = "Startup Journey";
+        const completedStagesMap = {};
+        const understoodStagesMap = {};
+        const completedPhaseTitles = [];
+        let resumeStep = 1;
+        let resumeStageIndex = 0;
+        let resumeLocated = false;
+
+        startupProject.steps.forEach((step, phaseIndex) => {
+          const stages = step.stages || [];
+          let allComplete = stages.length > 0;
+
+          stages.forEach((stage, stageIndex) => {
+            const key = stageProgressKey(
+              PROGRESS_PROJECT,
+              phaseIndex + 1,
+              stageIndex
+            );
+            if (stage.is_completed) {
+              completedStagesMap[key] = true;
+              understoodStagesMap[key] = true;
+            } else {
+              allComplete = false;
+              if (!resumeLocated) {
+                resumeStep = phaseIndex + 1;
+                resumeStageIndex = stageIndex;
+                resumeLocated = true;
+              }
+            }
+          });
+
+          if (allComplete) {
+            completedPhaseTitles.push(step.title);
+          }
+        });
+
+        // Every stage done → park on the last phase / last stage.
+        if (!resumeLocated && startupProject.steps.length) {
+          resumeStep = startupProject.steps.length;
+          const lastStages =
+            startupProject.steps[startupProject.steps.length - 1].stages || [];
+          resumeStageIndex = Math.max(0, lastStages.length - 1);
+        }
+
+        // ==================================================
+        // 12. UPDATE REACT STATE
         // ==================================================
 
         setWorkspaceMode("backend");
@@ -1350,15 +1408,21 @@ export default function useWorkspaceController() {
         // carried on catalogProject (title / journey_name) for display.
         setProjectName("Startup Journey");
         setMethodState({
-          current_step: 1,
+          current_step: resumeStep,
           tasks: startupProject.steps.map(
             (step) => step.title
           ),
-          completed_tasks: []
+          completed_tasks: completedPhaseTitles
         });
-        setSelectedPoint(1);
-        setSelectedStageByStep({});
-        setTaskViewByStep({ 1: "about" });
+        setCompletedStages(completedStagesMap);
+        setUnderstoodStages(understoodStagesMap);
+        setWorkingStages({});
+        setStageProgressLoaded(true);
+        setSelectedPoint(resumeStep);
+        setSelectedStageByStep(
+          resumeLocated ? { [resumeStep]: resumeStageIndex } : {}
+        );
+        setTaskViewByStep({ [resumeStep]: "about" });
         setLoading(false);
         setReady(true);
 
@@ -1778,6 +1842,23 @@ export default function useWorkspaceController() {
     const stepTitle = String(step?.title || "").trim();
     if (!stepTitle) return;
     if ((methodState.completed_tasks || []).includes(stepTitle)) return;
+
+    // Startup journey: phase completion is derived from student_stage_progress
+    // (each stage was already persisted via markStartupStageComplete), so just
+    // advance the local view - there is no project_progress row to write.
+    // The Trial Workspace has no backend at all - same local-only path.
+    if (catalogProject?.journey_id || workspaceMode === "demo") {
+      const maxSteps = catalogProject.steps.length;
+      const nextStep = Math.min(maxSteps, currentStepNumber + 1);
+      setMethodState((prev) => ({
+        ...prev,
+        completed_tasks: [...(prev.completed_tasks || []), stepTitle],
+        current_step: nextStep
+      }));
+      if (currentStepNumber >= maxSteps) toast.success("All phases completed. Great job!");
+      else toast.success("Phase completed. Next phase unlocked.");
+      return;
+    }
 
     try {
       const doneRes = await completeDashboardTask({ project_name: projectName, task: stepTitle });
@@ -2252,6 +2333,25 @@ export default function useWorkspaceController() {
     const nextMessages = [...baseMessages, { role: "user", agent: "You", content: trimmedText }];
     setMessages(nextMessages);
     setStageMessagesByKey((prev) => ({ ...prev, [stageKey]: nextMessages }));
+
+    // The Trial Workspace has no backend / mentor - answer locally so the
+    // chat still feels alive while someone is just exploring the UI.
+    if (workspaceMode === "demo") {
+      const demoReply = {
+        role: "assistant",
+        agent: stageAgentName(activeStageMentor, activeStageAgentKey) || "Mentor",
+        content:
+          "This is the trial workspace, so I am not connected to a live mentor here. " +
+          "Explore the stages, tasks and panels freely - sign in and pick a journey from Products to work with a real mentor."
+      };
+      setMessages((prev) => [...prev, demoReply]);
+      setStageMessagesByKey((prev) => ({
+        ...prev,
+        [stageKey]: [...(prev[stageKey] || nextMessages), demoReply]
+      }));
+      return true;
+    }
+
     setChatLoading(true);
     const thinkingStartedAt = Date.now();
     const requestPayload = {
@@ -2388,6 +2488,8 @@ export default function useWorkspaceController() {
 
   const persistLocalStageMessage = (stageKey, message) => {
     if (!projectName || !stageKey || !message?.content) return;
+    // Trial Workspace: nothing to persist to (and the endpoint is auth-only).
+    if (workspaceMode === "demo") return;
     const clientMessageId = message.client_message_id || createClientMessageId();
     return saveLocalChatMessage({
       project_name: projectName,
@@ -2543,6 +2645,8 @@ export default function useWorkspaceController() {
         return next;
       });
     }
+    // The Trial Workspace runs entirely client-side - no backend to save to.
+    if (workspaceMode === "demo") return true;
     try {
       await updateDashboardStageProgress({
         project_name: projectName,
@@ -2575,22 +2679,24 @@ export default function useWorkspaceController() {
       return next;
     });
     setStagePromptPhaseByKey((prev) => ({ ...prev, [key]: "none" }));
-    try {
-      await updateDashboardStageProgress({
-        project_name: projectName,
-        step_number: stepNumber,
-        stage_index: stageIndex,
-        understood: true,
-        status: "working"
-      });
-    } catch (err) {
-      setSelectedStageByStep(previous.selectedStageByStep);
-      setUnderstoodStages(previous.understood);
-      setWorkingStages(previous.working);
-      setCompletedStages(previous.completed);
-      const detail = err?.response?.data?.detail;
-      toast.error(detail || "Could not save working status. Please try again.");
-      return false;
+    if (workspaceMode !== "demo") {
+      try {
+        await updateDashboardStageProgress({
+          project_name: projectName,
+          step_number: stepNumber,
+          stage_index: stageIndex,
+          understood: true,
+          status: "working"
+        });
+      } catch (err) {
+        setSelectedStageByStep(previous.selectedStageByStep);
+        setUnderstoodStages(previous.understood);
+        setWorkingStages(previous.working);
+        setCompletedStages(previous.completed);
+        const detail = err?.response?.data?.detail;
+        toast.error(detail || "Could not save working status. Please try again.");
+        return false;
+      }
     }
     const point = workspacePoints[stepNumber - 1];
     const stage = point?.stages?.[stageIndex];
@@ -2887,13 +2993,28 @@ export default function useWorkspaceController() {
     });
     setStageCompleteConfirm({ open: false, stepNumber: 0, stageIndex: 0 });
     try {
-      await updateDashboardStageProgress({
-        project_name: projectName,
-        step_number: stepNumber,
-        stage_index: stageIndex,
-        understood: true,
-        status: "completed"
-      });
+      // The Trial Workspace has no backend - keep the completion local.
+      if (workspaceMode === "demo") {
+        // fall through to the local toast / step-advance below
+      } else {
+        const startupStageId =
+          catalogProject?.journey_id
+            ? catalogProject?.steps?.[stepNumber - 1]?.stages?.[stageIndex]?.id
+            : null;
+
+        if (startupStageId) {
+          // Startup journey: progress lives in student_stage_progress.
+          await markStartupStageComplete(startupStageId);
+        } else {
+          await updateDashboardStageProgress({
+            project_name: projectName,
+            step_number: stepNumber,
+            stage_index: stageIndex,
+            understood: true,
+            status: "completed"
+          });
+        }
+      }
     } catch (err) {
       setUnderstoodStages(previous.understood);
       setWorkingStages(previous.working);

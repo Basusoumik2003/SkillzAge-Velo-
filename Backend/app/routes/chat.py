@@ -14,7 +14,7 @@ from app.db.github_models import CodeReview, GitHubRepository
 from app.db.models import Mentor, MentorChatMessage, Project, ProjectProgress, User
 from app.routes.auth import get_current_user
 from app.services.context_builder import apply_review_feedback, build_context, current_stage_label, is_startup_project, project_tasks_from_db
-from app.services.startup_progress import StartupProgressAnchor, mark_stage_complete
+from app.services.startup_progress import StartupProgressAnchor, ensure_student_profile, mark_stage_complete
 from app.services.chat_cache import append_cached_messages, get_cached_history, set_cached_history
 from app.services.chat_context_optimizer import (
     is_cacheable_llm_message,
@@ -1457,16 +1457,15 @@ def _resolve_progress_anchor(db: Session, user: User, project_name: str) -> Proj
     """Resolves the "has this user selected this project" state used at the
     top of every /chat endpoint. Startup-journey projects (project_name
     starting with "startup") don't have a project_progress row at all - they
-    use student_profiles/student_stage_progress instead (see
+    use user_profiles/student_stage_progress instead (see
     app/services/startup_progress.py); everything else keeps using
     ProjectProgress unchanged."""
     if is_startup_project(project_name):
-        has_profile = db.execute(
-            text("SELECT 1 FROM student_profiles WHERE user_id = :user_id LIMIT 1"),
-            {"user_id": user.id},
-        ).first()
-        if not has_profile:
-            return None
+        # Picking a journey from the Products page IS the selection - there is
+        # no separate onboarding step - so fetch-or-create the user_profiles
+        # row here instead of 404ing ("Please select a project first"). The
+        # profile form / journey/select just fill in richer fields later.
+        ensure_student_profile(db, user.id)
         return StartupProgressAnchor.build(db, user.id, project_name)
 
     return (
