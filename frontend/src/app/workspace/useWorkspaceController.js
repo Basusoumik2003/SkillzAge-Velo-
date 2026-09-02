@@ -7,7 +7,7 @@ import { getMentorChatHistory, reviewStageDocument, saveLocalChatMessage, sendMe
 import {
   getStartupMentors,
   getStartupWorkspace,
-  selectStartupJourney
+  listStartupJourneys
 } from "@/lib/startup";
 import {
   completeDashboardTask,
@@ -651,7 +651,13 @@ export default function useWorkspaceController() {
   const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceClosed, setWorkspaceClosed] = useState({ closed: false, message: "" });
   const [projectName, setProjectName] = useState("");
-  const [startupJourneyId, setStartupJourneyId] = useState("");
+  const [startupJourneyId, setStartupJourneyId] = useState(() => {
+    if (typeof window === "undefined") return "";
+
+    return String(
+      window.localStorage.getItem("internlabs_journey_id") || ""
+    ).trim();
+  });
 
   const [chatLoading, setChatLoading] = useState(false);
   const [chatServiceAvailable, setChatServiceAvailable] = useState(true);
@@ -731,57 +737,80 @@ export default function useWorkspaceController() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-
-    const initialJourneyId = String(
-      searchParams?.get("journey_id") ||
-      localStorage.getItem("internlabs_journey_id") ||
-      ""
-    ).trim();
-
-    if (initialJourneyId) {
-      setStartupJourneyId(initialJourneyId);
-
-      console.log(
-        "[WORKSPACE JOURNEY] Initial journey ID:",
-        initialJourneyId
-      );
+    if (typeof window === "undefined") {
+      return undefined;
     }
 
-    const handleJourneyUpdate = (event) => {
-      const journeyId = String(
-        event?.detail?.journeyId || ""
+    const syncJourneyId = (event) => {
+      // The Wix iframe currently sends the journey through the postMessage
+      // payload, not necessarily through the iframe URL. That is why the Wix
+      // console can show journey 5 while the iframe URL itself shows {}.
+      const eventJourneyId = String(
+        event?.detail?.journeyId ||
+        event?.detail?.journey_id ||
+        ""
       ).trim();
 
-      if (!journeyId) {
+      const urlJourneyId = String(
+        searchParams?.get("journey_id") ||
+        searchParams?.get("journeyId") ||
+        ""
+      ).trim();
+
+      const storedJourneyId = String(
+        window.localStorage.getItem(
+          "internlabs_journey_id"
+        ) || ""
+      ).trim();
+
+      // Priority:
+      // 1. New Wix message
+      // 2. URL
+      // 3. Existing localStorage
+      const nextJourneyId =
+        eventJourneyId ||
+        urlJourneyId ||
+        storedJourneyId;
+
+      if (!nextJourneyId) {
         console.warn(
-          "[WORKSPACE JOURNEY] Journey update received without ID"
+          "[WORKSPACE JOURNEY] No journey ID available"
         );
+
         return;
       }
 
+      try {
+        window.localStorage.setItem(
+          "internlabs_journey_id",
+          nextJourneyId
+        );
+      } catch (error) {
+        console.warn(
+          "[WORKSPACE JOURNEY] Could not persist journey ID:",
+          error
+        );
+      }
+
+      setStartupJourneyId(nextJourneyId);
+
       console.log(
-        "[WORKSPACE JOURNEY] Journey ID received from Wix:",
-        journeyId
+        "[WORKSPACE JOURNEY] ✅ Active journey ID:",
+        nextJourneyId
       );
-
-      localStorage.setItem(
-        "internlabs_journey_id",
-        journeyId
-      );
-
-      setStartupJourneyId(journeyId);
     };
+
+    syncJourneyId();
 
     window.addEventListener(
       "WORKSPACE_JOURNEY_UPDATED",
-      handleJourneyUpdate
+      syncJourneyId
     );
 
     return () => {
       window.removeEventListener(
         "WORKSPACE_JOURNEY_UPDATED",
-        handleJourneyUpdate
+        syncJourneyId
       );
     };
   }, [searchParams]);
@@ -870,120 +899,419 @@ export default function useWorkspaceController() {
 
 
   useEffect(() => {
-  if (!ready || !authReady) return;
-
-  let cancelled = false;
-
-  const selectedJourneyId = String(
-    startupJourneyId ||
-    searchParams?.get("journey_id") ||
-    localStorage.getItem("internlabs_journey_id") ||
-    ""
-  ).trim();
-
-  const loadStartupWorkspace = async () => {
-    if (selectedJourneyId) {
-      try {
-        await selectStartupJourney(selectedJourneyId);
-
-        console.log(
-          "[WORKSPACE JOURNEY] Selected journey:",
-          selectedJourneyId
-        );
-      } catch (error) {
-        console.error(
-          "[WORKSPACE JOURNEY] Failed to select journey:",
-          error?.response?.data || error?.message || error
-        );
-      }
+    if (!ready || !authReady) {
+      return undefined;
     }
 
-    return getStartupWorkspace();
-  };
+    let cancelled = false;
 
-  loadStartupWorkspace()
-  .then((data) => {
-    if (cancelled || !Array.isArray(data?.journey) || !data.journey.length) return;
+    const loadSelectedStartupJourney = async () => {
+      try {
+        // ==================================================
+        // 1. RESOLVE JOURNEY ID
+        // ==================================================
 
-    const startupMentorsByKey = new Map();
-    const startupMentorsById = new Map();
-    data.journey.forEach((phase, phaseIndex) => {
-      (phase.stages || []).forEach((stage, stageIndex) => {
-        const mentorId = Number(stage?.mentor_id);
-        const mentorAgentKey = String(stage?.mentor_agent_key || stage?.agent_key || phase?.default_agent_key || "startup_mentor").trim() || "startup_mentor";
-        const mapKey = Number.isFinite(mentorId) && mentorId > 0 ? `id:${mentorId}` : `key:${mentorAgentKey.toLowerCase()}`;
-        if (startupMentorsByKey.has(mapKey)) return;
-        const mentorRecord = {
-          id: Number.isFinite(mentorId) && mentorId > 0 ? mentorId : `${mentorAgentKey}:${phaseIndex}:${stageIndex}`,
-          agent_key: mentorAgentKey,
-          name: stage?.mentor_name || mentorAgentKey.replaceAll("_", " ") || "Startup Mentor",
-          role: stage?.mentor_role || stage?.mentor_name || "Startup Mentor",
-          avatar_url: stage?.mentor_avatar_url || "",
-          goal: stage?.mentor_goal || "",
-          backstory: stage?.mentor_backstory || "",
-          rules: stage?.mentor_backstory || "",
-          boundaries: "",
-          backend_key: mentorAgentKey.startsWith("startup_") ? "startup_mentor" : mentorAgentKey,
-          accent: WORKSPACE_AGENT_ACCENTS[(phaseIndex + stageIndex) % WORKSPACE_AGENT_ACCENTS.length] || "from-slate-700 to-slate-950"
-        };
-        startupMentorsByKey.set(mapKey, mentorRecord);
-        if (Number.isFinite(mentorId) && mentorId > 0) {
-          startupMentorsById.set(mentorId, mentorRecord);
+        const selectedJourneyId = String(
+          startupJourneyId ||
+          searchParams?.get("journey_id") ||
+          searchParams?.get("journeyId") ||
+          localStorage.getItem(
+            "internlabs_journey_id"
+          ) ||
+          ""
+        ).trim();
+
+        console.log(
+          "======================================"
+        );
+
+        console.log(
+          "[WORKSPACE JOURNEY] Loading selected journey"
+        );
+
+        console.log(
+          "[WORKSPACE JOURNEY] Journey ID:",
+          selectedJourneyId || "none"
+        );
+
+        console.log(
+          "======================================"
+        );
+
+        if (!selectedJourneyId) {
+          console.warn(
+            "[WORKSPACE JOURNEY] No journey ID supplied"
+          );
+
+          return;
         }
-      });
-    });
-    const startupMentors = [...startupMentorsByKey.values()];
-    if (startupMentors.length) setWorkspaceAgents(startupMentors);
 
-    const startupProject = {
-      title:
-        data?.journey_info?.journey_name ||
-        data?.journey_name ||
-        data?.profile?.journey_name ||
-        "Startup Journey",
-      description:
-        data?.journey_info?.journey_description ||
-        data?.journey_description ||
-        "",
-      steps: data.journey.map((phase) => ({
-        title: phase.phase_name || phase.phase_key || "Phase",
-        phase_context: phase.phase_description || phase.phase_objective || "",
-        agent_key: String(phase.default_agent_key || phase.agent_key || "startup_mentor").trim() || "startup_mentor",
-        stages: (phase.stages || []).map((stage) => ({
-          title: stage.stage_name || stage.stage_key || "Stage",
-          stage_context: stage.stage_context || "",
-          objective: stage.stage_objective || "",
-          deliverable: stage.expected_outcome || "",
-          readiness_criteria: stage.readiness_criteria || "",
-          recommended_actions: stage.recommended_actions || "",
-          document_required: false,
-          github_integration_required: false,
-          mentor_id: stage.mentor_id || null,
-          mentor_name: stage.mentor_name || "",
-          agent_key: String(stage.mentor_agent_key || stage.agent_key || phase.default_agent_key || "startup_mentor").trim() || "startup_mentor"
-        }))
-      }))
+        // ==================================================
+        // 2. PERSIST JOURNEY ID
+        // ==================================================
+
+        try {
+          localStorage.setItem(
+            "internlabs_journey_id",
+            selectedJourneyId
+          );
+        } catch {
+          // Ignore storage failure.
+        }
+
+        // ==================================================
+        // 3. LOAD WORKSPACE DIRECTLY FOR THAT JOURNEY
+        // ==================================================
+        //
+        // IMPORTANT:
+        // Do NOT depend on student_profiles.journey_id here.
+        //
+        // The Products card already told us exactly which
+        // journey the user selected, so load it immediately
+        // even if the user has no student_profiles row yet.
+        //
+
+        const data =
+          await getStartupWorkspace(
+            selectedJourneyId
+          );
+
+        if (cancelled) {
+          return;
+        }
+
+        console.log(
+          "[WORKSPACE JOURNEY] Backend workspace response:",
+          data
+        );
+
+        // ==================================================
+        // 4. VALIDATE PHASE DATA
+        // ==================================================
+
+        if (
+          !Array.isArray(data?.journey) ||
+          !data.journey.length
+        ) {
+          console.warn(
+            "[WORKSPACE JOURNEY] No phases returned for journey:",
+            selectedJourneyId
+          );
+
+          return;
+        }
+
+        // ==================================================
+        // 5. RESOLVE ACTUAL JOURNEY ID
+        // ==================================================
+
+        const resolvedJourneyId = String(
+          data?.journey_id ||
+          selectedJourneyId
+        ).trim();
+
+        if (resolvedJourneyId) {
+          try {
+            localStorage.setItem(
+              "internlabs_journey_id",
+              resolvedJourneyId
+            );
+          } catch {
+            // Ignore storage failure.
+          }
+
+          setStartupJourneyId(resolvedJourneyId);
+        }
+
+        // ==================================================
+        // 6. LOAD JOURNEY LIST FOR DISPLAY NAME
+        // ==================================================
+        //
+        // Safety net: even if /startup/workspace doesn't yet
+        // return journey_info, /startup/journeys contains the
+        // actual journey_name and description.
+        //
+
+        let selectedJourneyRecord = null;
+
+        try {
+          const journeyResponse =
+            await listStartupJourneys();
+
+          if (cancelled) {
+            return;
+          }
+
+          const journeys =
+            Array.isArray(
+              journeyResponse?.journeys
+            )
+              ? journeyResponse.journeys
+              : Array.isArray(journeyResponse)
+              ? journeyResponse
+              : [];
+
+          selectedJourneyRecord =
+            journeys.find(
+              (item) =>
+                String(item?.id || "").trim() ===
+                String(resolvedJourneyId).trim()
+            ) || null;
+
+          console.log(
+            "[WORKSPACE JOURNEY] Selected journey record:",
+            selectedJourneyRecord
+          );
+        } catch (journeyError) {
+          console.warn(
+            "[WORKSPACE JOURNEY] Could not load journey metadata:",
+            journeyError?.response?.data ||
+            journeyError?.message ||
+            journeyError
+          );
+        }
+
+        // ==================================================
+        // 7. RESOLVE DISPLAY NAME
+        // ==================================================
+
+        const resolvedJourneyName =
+          String(
+            selectedJourneyRecord?.journey_name ||
+            data?.journey_info?.journey_name ||
+            data?.journey_name ||
+            data?.profile?.journey_name ||
+            "Startup Journey"
+          ).trim() || "Startup Journey";
+
+        // ==================================================
+        // 8. RESOLVE DESCRIPTION
+        // ==================================================
+
+        const resolvedJourneyDescription =
+          String(
+            selectedJourneyRecord?.journey_description ||
+            data?.journey_info?.journey_description ||
+            data?.journey_description ||
+            data?.profile?.journey_description ||
+            ""
+          ).trim();
+
+        // ==================================================
+        // 9. BUILD MENTORS
+        // ==================================================
+
+        const startupMentorsByKey = new Map();
+
+        data.journey.forEach((phase, phaseIndex) => {
+          (phase.stages || []).forEach((stage, stageIndex) => {
+            const mentorId = Number(stage?.mentor_id);
+
+            const mentorAgentKey =
+              String(
+                stage?.mentor_agent_key ||
+                stage?.agent_key ||
+                phase?.default_agent_key ||
+                "startup_mentor"
+              ).trim() || "startup_mentor";
+
+            const mapKey =
+              Number.isFinite(mentorId) && mentorId > 0
+                ? `id:${mentorId}`
+                : `key:${mentorAgentKey.toLowerCase()}`;
+
+            if (startupMentorsByKey.has(mapKey)) {
+              return;
+            }
+
+            const mentorRecord = {
+              id:
+                Number.isFinite(mentorId) && mentorId > 0
+                  ? mentorId
+                  : `${mentorAgentKey}:${phaseIndex}:${stageIndex}`,
+              agent_key: mentorAgentKey,
+              name:
+                stage?.mentor_name ||
+                mentorAgentKey.replaceAll("_", " ") ||
+                "Startup Mentor",
+              role:
+                stage?.mentor_role ||
+                stage?.mentor_name ||
+                "Startup Mentor",
+              avatar_url: stage?.mentor_avatar_url || "",
+              goal: stage?.mentor_goal || "",
+              backstory: stage?.mentor_backstory || "",
+              rules: stage?.mentor_backstory || "",
+              boundaries: "",
+              backend_key: mentorAgentKey.startsWith("startup_")
+                ? "startup_mentor"
+                : mentorAgentKey,
+              accent:
+                WORKSPACE_AGENT_ACCENTS[
+                  (phaseIndex + stageIndex) %
+                    WORKSPACE_AGENT_ACCENTS.length
+                ] || "from-slate-700 to-slate-950"
+            };
+
+            startupMentorsByKey.set(mapKey, mentorRecord);
+          });
+        });
+
+        const startupMentors = [
+          ...startupMentorsByKey.values()
+        ];
+
+        if (startupMentors.length) {
+          setWorkspaceAgents(startupMentors);
+        }
+
+        // ==================================================
+        // 10. BUILD STARTUP PROJECT
+        // ==================================================
+
+        const startupProject = {
+          title: resolvedJourneyName,
+          journey_id: resolvedJourneyId,
+          journey_name: resolvedJourneyName,
+          journey_description: resolvedJourneyDescription,
+          description: resolvedJourneyDescription,
+          steps: data.journey.map((phase) => ({
+            title:
+              phase?.phase_name ||
+              phase?.phase_key ||
+              "Phase",
+            phase_context:
+              phase?.phase_description ||
+              phase?.phase_objective ||
+              "",
+            agent_key:
+              String(
+                phase?.default_agent_key ||
+                phase?.agent_key ||
+                "startup_mentor"
+              ).trim() || "startup_mentor",
+            duration_value:
+              Number(phase?.duration_value) ||
+              Number(phase?.timeline_value) ||
+              null,
+            duration_max_value:
+              Number(phase?.duration_max_value) ||
+              Number(phase?.timeline_max_value) ||
+              null,
+            duration_unit:
+              phase?.duration_unit ||
+              phase?.timeline_unit ||
+              "week",
+            stages: (phase?.stages || []).map((stage) => ({
+              title:
+                stage?.stage_name ||
+                stage?.stage_key ||
+                "Stage",
+              stage_context: stage?.stage_context || "",
+              objective: stage?.stage_objective || "",
+              deliverable: stage?.expected_outcome || "",
+              readiness_criteria:
+                stage?.readiness_criteria || "",
+              recommended_actions:
+                stage?.recommended_actions || "",
+              document_required: Boolean(
+                stage?.document_required
+              ),
+              link_submission_required: Boolean(
+                stage?.link_submission_required
+              ),
+              github_integration_required: Boolean(
+                stage?.github_integration_required
+              ),
+              mentor_id: stage?.mentor_id || null,
+              mentor_name: stage?.mentor_name || "",
+              agent_key:
+                String(
+                  stage?.mentor_agent_key ||
+                  stage?.agent_key ||
+                  phase?.default_agent_key ||
+                  "startup_mentor"
+                ).trim() || "startup_mentor"
+            }))
+          }))
+        };
+
+        // ==================================================
+        // 11. UPDATE REACT STATE
+        // ==================================================
+
+        setWorkspaceMode("backend");
+        setWorkspaceError("");
+        setWorkspaceClosed({ closed: false, message: "" });
+        setCatalogProject(startupProject);
+        setProjectName(resolvedJourneyName);
+        setMethodState({
+          current_step: 1,
+          tasks: startupProject.steps.map(
+            (step) => step.title
+          ),
+          completed_tasks: []
+        });
+        setSelectedPoint(1);
+        setSelectedStageByStep({});
+        setTaskViewByStep({ 1: "about" });
+        setLoading(false);
+        setReady(true);
+
+        console.log(
+          "======================================"
+        );
+        console.log(
+          "[WORKSPACE JOURNEY] ✅ FINAL WORKSPACE"
+        );
+        console.log(
+          "[WORKSPACE JOURNEY] ID:",
+          resolvedJourneyId
+        );
+        console.log(
+          "[WORKSPACE JOURNEY] NAME:",
+          resolvedJourneyName
+        );
+        console.log(
+          "[WORKSPACE JOURNEY] DESCRIPTION:",
+          resolvedJourneyDescription
+        );
+        console.log(
+          "[WORKSPACE JOURNEY] PHASES:",
+          startupProject.steps.length
+        );
+        console.log(
+          "======================================"
+        );
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        console.error(
+          "[WORKSPACE JOURNEY] ❌ Failed to load selected journey:",
+          error?.response?.data ||
+          error?.message ||
+          error
+        );
+
+        setWorkspaceError(
+          error?.response?.data?.detail ||
+          error?.message ||
+          "Unable to load the selected journey."
+        );
+
+        setLoading(false);
+        setReady(true);
+      }
     };
 
-    setCatalogProject(startupProject);
-    setProjectName(startupProject.title);
-    setMethodState({
-      current_step: 1,
-      tasks: startupProject.steps.map((step) => step.title),
-      completed_tasks: []
-    });
-    setSelectedPoint(1);
-    setSelectedStageByStep({});
-    setTaskViewByStep({ 1: "about" });
-  })
-  .catch((error) => {
-    console.error("Unable to load startup journey:", error);
-  });
+    loadSelectedStartupJourney();
 
-  return () => {
-    cancelled = true;
-  };
-}, [authReady, ready, searchParams, startupJourneyId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, ready, searchParams, startupJourneyId]);
 
   const methodDisplayStep = useMemo(() => {
     return clampStep(methodState.current_step, methodTotalSteps || 1);
@@ -1020,13 +1348,13 @@ export default function useWorkspaceController() {
           duration_max_value:
             Number(s?.duration_max_value) > 0
               ? Math.max(
-                  Number(s?.duration_value) > 0 ? normalizeDurationValue(s.duration_value) : normalizeDurationValue(parsed.duration_value),
-                  normalizeDurationValue(s.duration_max_value)
-                )
+                Number(s?.duration_value) > 0 ? normalizeDurationValue(s.duration_value) : normalizeDurationValue(parsed.duration_value),
+                normalizeDurationValue(s.duration_max_value)
+              )
               : Math.max(
-                  Number(s?.duration_value) > 0 ? normalizeDurationValue(s.duration_value) : normalizeDurationValue(parsed.duration_value),
-                  normalizeDurationValue(parsed.duration_max_value || parsed.duration_value)
-                ),
+                Number(s?.duration_value) > 0 ? normalizeDurationValue(s.duration_value) : normalizeDurationValue(parsed.duration_value),
+                normalizeDurationValue(parsed.duration_max_value || parsed.duration_value)
+              ),
           duration_unit: Number(s?.duration_value) > 0 ? normalizeDurationUnit(s.duration_unit) : parsed.duration_unit,
           stages: parsed.stages.map((stage) => ({
             ...stage,
@@ -1475,7 +1803,7 @@ export default function useWorkspaceController() {
     if (!ready || !authReady || !projectName || workspaceMode === "demo") return;
     let active = true;
     const loadCatalog = async () => {
-       if (projectName === "Startup Journey") return;
+      if (projectName === "Startup Journey") return;
       setLoading(true);
       setWorkspaceError("");
       try {
@@ -1498,8 +1826,8 @@ export default function useWorkspaceController() {
             completed_tasks: Array.isArray(progressRow?.completed_tasks)
               ? progressRow.completed_tasks
               : Array.isArray(prev.completed_tasks)
-              ? prev.completed_tasks
-              : []
+                ? prev.completed_tasks
+                : []
           }));
           lastAnnouncedStepRef.current = 0;
           setCenterMode("context");
@@ -1858,9 +2186,9 @@ export default function useWorkspaceController() {
         activeStageMentor?.name ||
         selectedAgent?.name ||
         activeStageMentor?.role ||
-          selectedAgent?.role ||
-          stageAgentLabel ||
-          "Mentor";
+        selectedAgent?.role ||
+        stageAgentLabel ||
+        "Mentor";
       setChatServiceAvailable(false);
       const busyMessage = {
         role: "assistant",
@@ -2172,7 +2500,7 @@ export default function useWorkspaceController() {
         ? `Great, you are officially working on "${stageTitle}". Build the deliverable, and when it is ready, submit it here with the attachment button. I will review it and tell you clearly whether it passes or what needs revision.`
         : stage?.github_integration_required
           ? `Great, you are officially working on "${stageTitle}". Before you mark this stage completed, connect your GitHub repository from the GitHub tab so I can verify your project is linked.`
-        : `Great, you are officially working on "${stageTitle}". Do the work for this stage, and when you are done, use the Completed button below so we can move to the next stage.`
+          : `Great, you are officially working on "${stageTitle}". Do the work for this stage, and when you are done, use the Completed button below so we can move to the next stage.`
     }, { persist: true });
     return true;
   };
@@ -2520,41 +2848,41 @@ export default function useWorkspaceController() {
   const promptActiveStageKey = currentStageKey;
   const storedUser = storedUserState;
   const storedProfile = storedProfileState;
- const studentName = useMemo(() => {
+  const studentName = useMemo(() => {
 
     const name = String(
-        storedProfile?.full_name ||
-        storedUser?.full_name ||
-        storedUser?.name ||
-        storedProfile?.email?.split("@")?.[0] ||
-        storedUser?.email?.split("@")?.[0] ||
-        ""
+      storedProfile?.full_name ||
+      storedUser?.full_name ||
+      storedUser?.name ||
+      storedProfile?.email?.split("@")?.[0] ||
+      storedUser?.email?.split("@")?.[0] ||
+      ""
     ).trim();
 
     return name || "there";
 
-}, [storedProfile, storedUser]);
-const studentAvatarUrl = useMemo(() => {
+  }, [storedProfile, storedUser]);
+  const studentAvatarUrl = useMemo(() => {
 
     const avatar =
-        storedProfile?.avatar_url ||
-        storedProfile?.profile_image_url ||
-        storedProfile?.profile_picture ||
-        storedProfile?.image_url ||
-        storedUser?.avatar_url ||
-        storedUser?.profile_image_url ||
-        storedUser?.profile_picture ||
-        storedUser?.image_url ||
-        profileAvatarUrl ||
-        "";
+      storedProfile?.avatar_url ||
+      storedProfile?.profile_image_url ||
+      storedProfile?.profile_picture ||
+      storedProfile?.image_url ||
+      storedUser?.avatar_url ||
+      storedUser?.profile_image_url ||
+      storedUser?.profile_picture ||
+      storedUser?.image_url ||
+      profileAvatarUrl ||
+      "";
 
     return resolveAuthAssetUrl(avatar);
 
-}, [
+  }, [
     profileAvatarUrl,
     storedProfile,
     storedUser
-]);
+  ]);
   const stageAgentLabel = stageAgentName(activeStageMentor, activeStageAgentKey);
   const stageDisplayAgentLabel = displayStageAgentName(
     stageAgentLabel,
@@ -2599,7 +2927,7 @@ const studentAvatarUrl = useMemo(() => {
         if (cancelled) return;
         setProfileAvatarUrl(resolveAuthAssetUrl(data?.profile?.profile_image_url || data?.profile_image_url || ""));
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => {
       cancelled = true;
     };
@@ -2724,16 +3052,16 @@ const studentAvatarUrl = useMemo(() => {
     : null;
   const loadingStageAgentLabel = displayStageAgentName(
     activeStageMentor?.name ||
-      activeStageMentor?.role ||
-      stageDisplayAgentLabel ||
-      selectedAgent?.name ||
-      selectedAgent?.role ||
-      "Mentor",
+    activeStageMentor?.role ||
+    stageDisplayAgentLabel ||
+    selectedAgent?.name ||
+    selectedAgent?.role ||
+    "Mentor",
     latestSpecificStageAgent ||
-      activeStageMentor?.name ||
-      selectedAgent?.name ||
-      stageDisplayAgentLabel ||
-      "Mentor"
+    activeStageMentor?.name ||
+    selectedAgent?.name ||
+    stageDisplayAgentLabel ||
+    "Mentor"
   );
 
   useEffect(() => {
@@ -2822,24 +3150,24 @@ const studentAvatarUrl = useMemo(() => {
     activePhaseTimelineStatus === "not_defined" || !selectedPointData?.duration_defined
       ? "border-slate-200 bg-slate-50 text-slate-600"
       : activePhaseTimelineStatus === "delayed" || activePhaseTimelineStatus === "completed_late"
-      ? "border-red-200 bg-red-50 text-red-700"
-      : activePhaseTimelineStatus === "near_deadline"
-        ? "border-amber-200 bg-amber-50 text-amber-800"
-        : "border-emerald-200 bg-emerald-50 text-emerald-700";
+        ? "border-red-200 bg-red-50 text-red-700"
+        : activePhaseTimelineStatus === "near_deadline"
+          ? "border-amber-200 bg-amber-50 text-amber-800"
+          : "border-emerald-200 bg-emerald-50 text-emerald-700";
   const activePhaseTimelineLabel =
     activePhaseTimelineStatus === "not_defined" || !selectedPointData?.duration_defined
       ? null
       : activePhaseTimelineStatus === "delayed" || activePhaseTimelineStatus === "completed_late"
-      ? `${Math.abs(Number(activePhaseTimeline?.days_left) || 0)} day${Math.abs(Number(activePhaseTimeline?.days_left) || 0) === 1 ? "" : "s"} delayed`
-      : activePhaseTimelineStatus === "near_deadline"
-        ? `Near deadline: ${Number(activePhaseTimeline?.days_left) || 0} day${Number(activePhaseTimeline?.days_left) === 1 ? "" : "s"} left`
-        : activePhaseTimelineStatus === "completed_on_time"
-          ? "Completed on time"
-        : activePhaseTimeline?.due_at
-          ? "On track"
-          : activePhaseDuration && activePhaseDuration !== "Not defined"
-            ? `Timeline: ${activePhaseDuration}`
-            : null;
+        ? `${Math.abs(Number(activePhaseTimeline?.days_left) || 0)} day${Math.abs(Number(activePhaseTimeline?.days_left) || 0) === 1 ? "" : "s"} delayed`
+        : activePhaseTimelineStatus === "near_deadline"
+          ? `Near deadline: ${Number(activePhaseTimeline?.days_left) || 0} day${Number(activePhaseTimeline?.days_left) === 1 ? "" : "s"} left`
+          : activePhaseTimelineStatus === "completed_on_time"
+            ? "Completed on time"
+            : activePhaseTimeline?.due_at
+              ? "On track"
+              : activePhaseDuration && activePhaseDuration !== "Not defined"
+                ? `Timeline: ${activePhaseDuration}`
+                : null;
   const taskView = taskViewByStep[selectedPoint] || "about";
   const activeStageUploadedDocument = stageDocuments[activeStageKey];
   const activeStageRequiresDocument = Boolean(activeStageData?.document_required) || Boolean(activeStageUploadedDocument?.document_required);
@@ -2856,26 +3184,26 @@ const studentAvatarUrl = useMemo(() => {
       ? "Review pending"
       : activeStageRequiresDocument && activeStageDocumentReviewStatus === "rejected"
         ? "Needs revision"
-    : activeStageWorking
-      ? "Working"
-      : activeStageChecked
-        ? "Ready to work"
-        : activeStageUnlocked
-          ? "Undone"
-          : "Locked";
+        : activeStageWorking
+          ? "Working"
+          : activeStageChecked
+            ? "Ready to work"
+            : activeStageUnlocked
+              ? "Undone"
+              : "Locked";
   const activeStageStatusClass = activeStageCompleted
     ? "border-emerald-200 bg-emerald-50 text-emerald-700"
     : activeStageRequiresDocument && activeStageDocumentReviewStatus === "pending"
       ? "border-sky-200 bg-sky-50 text-sky-700"
       : activeStageRequiresDocument && activeStageDocumentReviewStatus === "rejected"
         ? "border-red-200 bg-red-50 text-red-700"
-    : activeStageWorking
-      ? "border-amber-200 bg-amber-50 text-amber-700"
-      : activeStageChecked
-        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-        : !activeStageUnlocked
-          ? "border-slate-200 bg-slate-100 text-slate-500"
-          : "border-red-200 bg-red-50 text-red-700";
+        : activeStageWorking
+          ? "border-amber-200 bg-amber-50 text-amber-700"
+          : activeStageChecked
+            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+            : !activeStageUnlocked
+              ? "border-slate-200 bg-slate-100 text-slate-500"
+              : "border-red-200 bg-red-50 text-red-700";
   const finalStageActive = activeStageIndex >= Math.max(0, selectedPointStages.length - 1);
   const hasNextPoint = selectedPoint < workspacePoints.length;
   const canGoBackInTaskFlow = taskView === "stage" || selectedPoint > 1;

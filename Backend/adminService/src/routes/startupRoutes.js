@@ -750,15 +750,26 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
   try {
     const userId = req.auth.userId;
     const profile = await getCurrentProfile(userId);
-    const journeyId = await resolveEffectiveJourneyId(profile);
+    // The Products card tells us exactly which journey the user picked and
+    // sends it as ?journey_id=<id>. Honour that first so a brand-new user with
+    // no student_profiles row can still open the selected journey. Fall back to
+    // the student's saved journey / the default only when no id was requested.
+    const requestedJourneyId = normalizeInteger(
+      req.query?.journey_id || req.query?.journeyId,
+      null
+    );
+    const journeyId =
+      Number.isFinite(requestedJourneyId) && requestedJourneyId > 0
+        ? requestedJourneyId
+        : await resolveEffectiveJourneyId(profile);
     // The selected journey's own metadata (name/description/objective). Resolved
-    // from journeyId above - which is the student's picked journey
-    // (student_profiles.journey_id) or the default - not "the first journey in
-    // the table". loadJourney() only returns the phases array, so this row has
-    // to be fetched separately.
+    // from journeyId above - which is the requested journey, the student's
+    // picked journey (student_profiles.journey_id) or the default - not "the
+    // first journey in the table". loadJourney() only returns the phases array,
+    // so this row has to be fetched separately.
     const journeyRow = journeyId
       ? (await pool.query(
-          "SELECT id, journey_key, journey_name, journey_description, journey_objective FROM journeys WHERE id = $1 LIMIT 1",
+          "SELECT id, journey_key, journey_name, journey_description, journey_objective, intended_audience, is_active FROM journeys WHERE id = $1 LIMIT 1",
           [journeyId]
         )).rows[0] || null
       : null;
@@ -792,14 +803,18 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
       journey_info: journeyRow
         ? {
             id: journeyRow.id,
+            journey_key: journeyRow.journey_key || "",
             journey_name: journeyRow.journey_name || "",
             journey_description: journeyRow.journey_description || "",
-            journey_objective: journeyRow.journey_objective || ""
+            journey_objective: journeyRow.journey_objective || "",
+            intended_audience: journeyRow.intended_audience || "",
+            is_active: journeyRow.is_active ?? null
           }
         : null,
       // Flat fields kept for backward compatibility with existing callers.
       journey_name: journeyRow?.journey_name || "",
       journey_description: journeyRow?.journey_description || "",
+      journey_objective: journeyRow?.journey_objective || "",
       active_phase: activePhase,
       active_stage: activeStage,
       session_id: sessionId,
