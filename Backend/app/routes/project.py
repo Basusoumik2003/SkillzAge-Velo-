@@ -5,11 +5,20 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
-from app.db.models import Project, ProjectProgress, Subscription, User
+from app.db.models import (
+    Project,
+    ProjectProgress,
+    Subscription,
+    User,
+    UserProjectAccess,
+)
 from app.routes.auth import get_current_user
 from app.services.context_builder import is_startup_project
 from app.services.resume_parser import extract_resume_text
-from app.services.startup_progress import ensure_student_profile, get_startup_progress_state
+from app.services.startup_progress import (
+    ensure_student_profile,
+    get_startup_progress_state,
+)
 
 router = APIRouter(prefix="/project", tags=["project"])
 
@@ -18,13 +27,95 @@ class SelectProjectInput(BaseModel):
     project_name: str
 
 
-def _active_project_titles(db: Session, *, demo_only: bool = False) -> list[str]:
-    query = db.query(Project).filter(Project.is_active == True)  # noqa: E712
+def _active_project_titles(
+    db: Session,
+    *,
+    demo_only: bool = False
+) -> list[str]:
+
+    query = db.query(Project).filter(
+        Project.is_active == True  # noqa: E712
+    )
+
     if demo_only:
-        query = query.filter(Project.is_demo_project == True)  # noqa: E712
-    rows = query.order_by(Project.created_at.desc(), Project.id.desc()).all()
+        query = query.filter(
+            Project.is_demo_project == True  # noqa: E712
+        )
+
+    rows = (
+        query
+        .order_by(Project.created_at.desc(), Project.id.desc())
+        .all()
+    )
+
     return [row.title for row in rows if row.title]
 
+
+# ==========================================================
+# MY PURCHASED PROJECTS
+# ==========================================================
+
+@router.get("/my-projects")
+def get_my_projects(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Return only projects that this authenticated user has active access to.
+
+    IMPORTANT:
+    - User identity comes from the authenticated JWT.
+    - No user_id is accepted from the frontend.
+    - Access is determined by user_project_access.
+    - Project information comes from projects.
+    """
+
+    records = (
+        db.query(
+            UserProjectAccess,
+            Project,
+        )
+        .join(
+            Project,
+            UserProjectAccess.project_id == Project.id,
+        )
+        .filter(
+            UserProjectAccess.user_id == user.id,
+            UserProjectAccess.access_status == "active",
+            Project.is_active == True,  # noqa: E712
+        )
+        .order_by(
+            UserProjectAccess.purchased_at.desc(),
+            Project.id.desc(),
+        )
+        .all()
+    )
+
+    projects = []
+
+    for access, project in records:
+        projects.append(
+            {
+                "project_id": project.id,
+                "title": project.title,
+                "description": project.description,
+                "timeline_weeks": project.timeline_weeks,
+                "category": project.category,
+                "global_category": project.global_category,
+                "project_status": access.project_status,
+                "access_status": access.access_status,
+                "purchased_at": access.purchased_at,
+            }
+        )
+
+    return {
+        "projects": projects
+    }
+
+
+# ==========================================================
+# RESUME
+# ==========================================================
 
 @router.post("/resume")
 async def upload_resume(
@@ -33,30 +124,63 @@ async def upload_resume(
     user: User = Depends(get_current_user),
 ):
     content = await resume.read()
+
     parsed = extract_resume_text(content)
+
     user.resume_text = parsed
+
     db.add(user)
     db.commit()
-    return {"message": "Resume uploaded", "has_resume": bool(parsed)}
 
+    return {
+        "message": "Resume uploaded",
+        "has_resume": bool(parsed),
+    }
+
+
+# ==========================================================
+# PROJECT RECOMMENDATIONS
+# ==========================================================
 
 @router.get("/recommendations")
 def get_recommendations(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    subscription = db.query(Subscription).filter(Subscription.user_id == user.id).first()
+    subscription = (
+        db.query(Subscription)
+        .filter(Subscription.user_id == user.id)
+        .first()
+    )
+
     has_active_subscription = bool(
         subscription
         and subscription.status == "active"
-        and (subscription.current_period_end is None or subscription.current_period_end > datetime.now(timezone.utc))
+        and (
+            subscription.current_period_end is None
+            or subscription.current_period_end
+            > datetime.now(timezone.utc)
+        )
     )
 
     if not has_active_subscription:
-        return {"projects": _active_project_titles(db, demo_only=True), "access": "demo"}
+        return {
+            "projects": _active_project_titles(
+                db,
+                demo_only=True
+            ),
+            "access": "demo",
+        }
 
-    return {"projects": _active_project_titles(db), "access": "full"}
+    return {
+        "projects": _active_project_titles(db),
+        "access": "full",
+    }
 
+
+# ==========================================================
+# SELECT PROJECT
+# ==========================================================
 
 @router.post("/select")
 def select_project(
@@ -65,12 +189,16 @@ def select_project(
     user: User = Depends(get_current_user),
 ):
     if is_startup_project(payload.project_name):
-        # Startup-journey projects aren't in the `projects` catalog table and
-        # don't use project_progress - "selecting" one just means the student
-        # has a student_profiles row; per-stage progress lives in
-        # student_stage_progress (see app/services/startup_progress.py).
+
+        # Startup-journey projects aren't in the `projects` catalog table
+        # and don't use project_progress.
         ensure_student_profile(db, user.id)
-        state = get_startup_progress_state(db, user.id)
+
+        state = get_startup_progress_state(
+            db,
+            user.id
+        )
+
         return {
             "message": "Project selected",
             "project": {
@@ -80,24 +208,50 @@ def select_project(
             },
         }
 
-    subscription = db.query(Subscription).filter(Subscription.user_id == user.id).first()
+    subscription = (
+        db.query(Subscription)
+        .filter(Subscription.user_id == user.id)
+        .first()
+    )
+
     has_active_subscription = bool(
         subscription
         and subscription.status == "active"
-        and (subscription.current_period_end is None or subscription.current_period_end > datetime.now(timezone.utc))
+        and (
+            subscription.current_period_end is None
+            or subscription.current_period_end
+            > datetime.now(timezone.utc)
+        )
     )
-    allowed_projects = _active_project_titles(db, demo_only=not has_active_subscription)
+
+    allowed_projects = _active_project_titles(
+        db,
+        demo_only=not has_active_subscription
+    )
 
     if payload.project_name not in allowed_projects:
-        raise HTTPException(status_code=400, detail="Unsupported project")
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported project"
+        )
 
     progress = (
         db.query(ProjectProgress)
-        .filter(ProjectProgress.user_id == user.id, ProjectProgress.project_name == payload.project_name)
+        .filter(
+            ProjectProgress.user_id == user.id,
+            ProjectProgress.project_name == payload.project_name,
+        )
         .first()
     )
+
     if not progress:
-        progress = ProjectProgress(user_id=user.id, project_name=payload.project_name, current_step=1, completed_tasks="")
+        progress = ProjectProgress(
+            user_id=user.id,
+            project_name=payload.project_name,
+            current_step=1,
+            completed_tasks="",
+        )
+
         db.add(progress)
         db.commit()
         db.refresh(progress)
@@ -107,20 +261,44 @@ def select_project(
         "project": {
             "name": progress.project_name,
             "current_step": progress.current_step,
-            "completed_tasks": [t for t in (progress.completed_tasks or "").split("||") if t],
+            "completed_tasks": [
+                t
+                for t in (
+                    progress.completed_tasks or ""
+                ).split("||")
+                if t
+            ],
         },
     }
 
 
+# ==========================================================
+# PROJECT PROGRESS
+# ==========================================================
+
 @router.get("/progress")
-def get_progress(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    records = db.query(ProjectProgress).filter(ProjectProgress.user_id == user.id).all()
+def get_progress(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    records = (
+        db.query(ProjectProgress)
+        .filter(ProjectProgress.user_id == user.id)
+        .all()
+    )
+
     return {
         "progress": [
             {
                 "project_name": row.project_name,
                 "current_step": row.current_step,
-                "completed_tasks": [t for t in (row.completed_tasks or "").split("||") if t],
+                "completed_tasks": [
+                    t
+                    for t in (
+                        row.completed_tasks or ""
+                    ).split("||")
+                    if t
+                ],
             }
             for row in records
         ]

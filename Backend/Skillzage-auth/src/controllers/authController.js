@@ -390,6 +390,18 @@ async function login(req, res, next) {
 
 async function syncWixMember(req, res, next) {
   try {
+    const wixSyncSecret = req.headers["x-wix-sync-secret"];
+
+    if (
+      !wixSyncSecret ||
+      wixSyncSecret !== process.env.WIX_SYNC_SECRET
+    ) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized Wix sync request.",
+      });
+    }
+
     const {
       wixMemberId,
       email,

@@ -21,8 +21,18 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     resume_text = Column(Text, default="")
 
-    projects = relationship("ProjectProgress", back_populates="user", cascade="all, delete-orphan")
-    subscription = relationship("Subscription", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    projects = relationship(
+        "ProjectProgress",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+
+    subscription = relationship(
+        "Subscription",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan"
+    )
 
 
 class ProjectProgress(Base):
@@ -49,12 +59,7 @@ class StudentStageProgress(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    # student_profiles/startup_ideas/journey_phases/journey_stages have no
-    # SQLAlchemy model in this app (accessed only via raw SQL elsewhere, see
-    # app/services/startup_progress.py and context_builder.py) - the FK
-    # constraints already exist at the DB level from the migration, so these
-    # are left as plain columns rather than ForeignKey(...), which would fail
-    # to resolve against an unmapped table at mapper-configuration time.
+
     profile_id = Column(UUID(as_uuid=True), nullable=True)
     idea_id = Column(UUID(as_uuid=True), nullable=True)
     phase_id = Column(Integer, nullable=True)
@@ -71,10 +76,7 @@ class StudentStageProgress(Base):
 
 
 class StageDeliverable(Base):
-    """Admin-configured deliverable slot for one journey_stages row (sql/
-    migrations/2026-08-20_01_deliverable_management.sql). journey_stages
-    itself has no SQLAlchemy model in this app (see StudentStageProgress's
-    comment above) so stage_id is a plain column, not a ForeignKey."""
+    """Admin-configured deliverable slot for one journey_stages row."""
 
     __tablename__ = "stage_deliverables"
 
@@ -85,33 +87,38 @@ class StageDeliverable(Base):
     deliverable_type = Column(String(50), nullable=False, default="document")
     is_required = Column(Boolean, nullable=False, default=True)
     display_order = Column(Integer, nullable=False, default=1)
-    # Admin-uploaded demo/template file a student can download before
-    # filling out this deliverable (sql/migrations/2026-08-25_01_deliverable_gating.sql).
     template_url = Column(Text, nullable=False, default="")
     template_original_filename = Column(String(255), nullable=False, default="")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     submissions = relationship(
-        "StudentDeliverableSubmission", back_populates="deliverable", cascade="all, delete-orphan"
+        "StudentDeliverableSubmission",
+        back_populates="deliverable",
+        cascade="all, delete-orphan"
     )
 
 
 class StudentDeliverableSubmission(Base):
-    """One student's attempt at a stage_deliverables slot. Resubmissions
-    insert a new row (attempt_number + 1) rather than overwrite, so the full
-    history is preserved for the "Upload History" UI requirement."""
+    """One student's attempt at a stage_deliverables slot."""
 
     __tablename__ = "student_deliverable_submissions"
 
     id = Column(BigInteger, primary_key=True, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    # phase_id/stage_id mirror journey_phases/journey_stages FKs at the DB
-    # level (see the migration) but stay plain columns here for the same
-    # reason as StudentStageProgress.phase_id/stage_id above.
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
     phase_id = Column(Integer, nullable=False)
     stage_id = Column(Integer, nullable=False, index=True)
-    deliverable_id = Column(Integer, ForeignKey("stage_deliverables.id", ondelete="CASCADE"), nullable=False, index=True)
+    deliverable_id = Column(
+        Integer,
+        ForeignKey("stage_deliverables.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
     submission_type = Column(String(50), nullable=False, default="file")
     submission_text = Column(Text, nullable=False, default="")
     status = Column(String(30), nullable=False, default="submitted", index=True)
@@ -119,20 +126,38 @@ class StudentDeliverableSubmission(Base):
     submitted_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    deliverable = relationship("StageDeliverable", back_populates="submissions")
-    files = relationship("SubmissionFile", back_populates="submission", cascade="all, delete-orphan")
-    reviews = relationship("DeliverableReview", back_populates="submission", cascade="all, delete-orphan")
+    deliverable = relationship(
+        "StageDeliverable",
+        back_populates="submissions"
+    )
+
+    files = relationship(
+        "SubmissionFile",
+        back_populates="submission",
+        cascade="all, delete-orphan"
+    )
+
+    reviews = relationship(
+        "DeliverableReview",
+        back_populates="submission",
+        cascade="all, delete-orphan"
+    )
 
 
 class SubmissionFile(Base):
-    """S3-backed file attached to a submission (documents/pdf/image/video
-    deliverable types can carry multiple files per submission)."""
+    """S3-backed file attached to a submission."""
 
     __tablename__ = "submission_files"
 
     id = Column(BigInteger, primary_key=True, index=True)
     submission_id = Column(
-        BigInteger, ForeignKey("student_deliverable_submissions.id", ondelete="CASCADE"), nullable=False, index=True
+        BigInteger,
+        ForeignKey(
+            "student_deliverable_submissions.id",
+            ondelete="CASCADE"
+        ),
+        nullable=False,
+        index=True
     )
     file_name = Column(String(255), nullable=False)
     file_type = Column(String(50), nullable=False, default="")
@@ -141,34 +166,47 @@ class SubmissionFile(Base):
     s3_key = Column(Text, nullable=False)
     uploaded_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    submission = relationship("StudentDeliverableSubmission", back_populates="files")
+    submission = relationship(
+        "StudentDeliverableSubmission",
+        back_populates="files"
+    )
 
 
 class DeliverableReview(Base):
-    """AI or mentor review of one submission. A submission can accumulate
-    multiple rows over time (e.g. an AI review followed later by a mentor
-    review, or a review per resubmission) - the latest by created_at per
-    reviewer_type is what the student-facing "Review Feedback" UI shows."""
+    """AI or mentor review of one submission."""
 
     __tablename__ = "deliverable_reviews"
 
     id = Column(BigInteger, primary_key=True, index=True)
     submission_id = Column(
-        BigInteger, ForeignKey("student_deliverable_submissions.id", ondelete="CASCADE"), nullable=False, index=True
+        BigInteger,
+        ForeignKey(
+            "student_deliverable_submissions.id",
+            ondelete="CASCADE"
+        ),
+        nullable=False,
+        index=True
     )
     reviewer_type = Column(String(20), nullable=False, index=True)
     score = Column(Integer, nullable=False, default=0)
     review_status = Column(String(20), nullable=False, default="pending", index=True)
     feedback = Column(Text, nullable=False, default="")
-    reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    submission = relationship("StudentDeliverableSubmission", back_populates="reviews")
+    submission = relationship(
+        "StudentDeliverableSubmission",
+        back_populates="reviews"
+    )
 
 
 class Company(Base):
-    """Admin-managed company/tenant catalog (sql/schema.sql, section 8)."""
+    """Admin-managed company/tenant catalog."""
 
     __tablename__ = "companies"
 
@@ -227,9 +265,18 @@ class MentorChatMessage(Base):
     __tablename__ = "mentor_chat_messages"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
     project_name = Column(String(160), nullable=False, index=True)
-    mentor_id = Column(Integer, ForeignKey("project_mentors.id", ondelete="SET NULL"), nullable=True)
+    mentor_id = Column(
+        Integer,
+        ForeignKey("project_mentors.id", ondelete="SET NULL"),
+        nullable=True
+    )
     agent_key = Column(String(50), nullable=False, default="")
     agent_name = Column(String(100), nullable=False, default="")
     role = Column(String(20), nullable=False)
@@ -246,7 +293,12 @@ class AIUsageEvent(Base):
     model = Column(String(160), nullable=False)
     feature = Column(String(80), nullable=False)
     route = Column(String(160), nullable=False, default="")
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
     project_name = Column(String(160), nullable=False, default="")
     related_table = Column(String(120), nullable=False, default="")
     related_id = Column(Integer, nullable=True)
@@ -265,7 +317,13 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=False,
+        unique=True,
+        index=True
+    )
     plan = Column(String(50), nullable=False, default="free")
     status = Column(String(50), nullable=False, default="inactive")
     current_period_start = Column(DateTime(timezone=True), nullable=True)
@@ -275,3 +333,210 @@ class Subscription(Base):
     provider_subscription_id = Column(String(120), nullable=True)
 
     user = relationship("User", back_populates="subscription")
+
+
+# ==========================================================
+# PROJECT PURCHASE / ACCESS
+# ==========================================================
+
+class UserProjectAccess(Base):
+    __tablename__ = "user_project_access"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    project_id = Column(
+        Integer,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    access_status = Column(
+        String(20),
+        nullable=False,
+        default="active"
+    )
+    project_status = Column(
+        String(20),
+        nullable=False,
+        default="not_started"
+    )
+    purchased_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+
+    user = relationship("User")
+    project = relationship("Project")
+
+
+# ==========================================================
+# PAYMENT TRANSACTIONS
+# ==========================================================
+
+class PaymentTransaction(Base):
+    __tablename__ = "payment_transactions"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    project_id = Column(
+        Integer,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    provider = Column(
+        String(30),
+        nullable=False,
+        default="razorpay"
+    )
+    provider_order_id = Column(String(150), nullable=True)
+    provider_payment_id = Column(String(150), nullable=True)
+    provider_signature = Column(String(255), nullable=True)
+    amount_paise = Column(BigInteger, nullable=False)
+    currency = Column(String(10), nullable=False, default="INR")
+    payment_status = Column(
+        String(20),
+        nullable=False,
+        default="created"
+    )
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+    # `metadata` is reserved by SQLAlchemy's Declarative API, so map the
+    # "metadata" column to a differently named attribute.
+    transaction_metadata = Column("metadata", JSON, nullable=False, default=dict)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+
+    user = relationship("User")
+    project = relationship("Project")
+
+
+# ==========================================================
+# WIX PRODUCT ↔ PROJECT MAPPING
+# ==========================================================
+
+class ProjectProductMapping(Base):
+    __tablename__ = "project_product_mapping"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    project_id = Column(
+        Integer,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    wix_product_id = Column(String(150), nullable=False, unique=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+
+    project = relationship("Project")
+
+
+# ==========================================================
+# USER PROJECT DETAILS
+# ==========================================================
+
+class UserProjectDetails(Base):
+    __tablename__ = "user_project_details"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    project_id = Column(
+        Integer,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    details = Column(JSON, nullable=False, default=dict)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+
+    user = relationship("User")
+    project = relationship("Project")
+
+
+# ==========================================================
+# PROJECT ONBOARDING FIELDS
+# ==========================================================
+
+class ProjectOnboardingField(Base):
+    __tablename__ = "project_onboarding_fields"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    project_id = Column(
+        Integer,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    field_key = Column(String(100), nullable=False)
+    field_label = Column(String(200), nullable=False)
+    field_type = Column(
+        String(30),
+        nullable=False,
+        default="text"
+    )
+    is_required = Column(Boolean, nullable=False, default=False)
+    display_order = Column(Integer, nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+    options = Column(JSON, nullable=False, default=list)
+    placeholder = Column(Text, nullable=False, default="")
+    help_text = Column(Text, nullable=False, default="")
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now()
+    )
+
+    project = relationship("Project")
