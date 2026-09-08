@@ -2,10 +2,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.db.models import (
+    Journey,
     Project,
     ProjectProgress,
     Subscription,
@@ -60,56 +62,61 @@ def get_my_projects(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """
-    Return only projects that this authenticated user has active access to.
-
-    IMPORTANT:
-    - User identity comes from the authenticated JWT.
-    - No user_id is accepted from the frontend.
-    - Access is determined by user_project_access.
-    - Project information comes from projects.
-    """
-
-    records = (
-        db.query(
-            UserProjectAccess,
-            Project,
-        )
-        .join(
-            Project,
-            UserProjectAccess.project_id == Project.id,
-        )
-        .filter(
-            UserProjectAccess.user_id == user.id,
-            UserProjectAccess.access_status == "active",
-            Project.is_active == True,  # noqa: E712
-        )
-        .order_by(
-            UserProjectAccess.purchased_at.desc(),
-            Project.id.desc(),
-        )
-        .all()
-    )
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                upa.journey_id,
+                j.journey_name,
+                j.journey_description,
+                j.intended_audience,
+                j.is_active,
+                upa.project_status,
+                upa.access_status,
+                upa.purchased_at
+            FROM user_project_access upa
+            INNER JOIN journeys j
+                ON j.id = upa.journey_id
+            WHERE
+                upa.user_id = :user_id
+                AND upa.access_status = 'active'
+                AND j.is_active = TRUE
+            ORDER BY
+                upa.purchased_at DESC NULLS LAST,
+                j.id DESC
+            """
+        ),
+        {
+            "user_id": user.id
+        },
+    ).mappings().all()
 
     projects = []
 
-    for access, project in records:
+    for row in rows:
         projects.append(
             {
-                "project_id": project.id,
-                "title": project.title,
-                "description": project.description,
-                "timeline_weeks": project.timeline_weeks,
-                "category": project.category,
-                "global_category": project.global_category,
-                "project_status": access.project_status,
-                "access_status": access.access_status,
-                "purchased_at": access.purchased_at,
+                "journey_id": row["journey_id"],
+
+                # Keep these frontend names so the
+                # existing My Projects UI does not need
+                # to be redesigned.
+                "project_id": row["journey_id"],
+                "title": row["journey_name"],
+                "description": row["journey_description"],
+                "timeline_weeks": None,
+                "category": "journey",
+                "global_category": "",
+
+                "project_status": row["project_status"],
+                "access_status": row["access_status"],
+                "purchased_at": row["purchased_at"],
             }
         )
 
     return {
-        "projects": projects
+        "success": True,
+        "projects": projects,
     }
 
 

@@ -5,6 +5,20 @@ from sqlalchemy.orm import relationship
 from app.db.database import Base
 
 
+class Journey(Base):
+    __tablename__ = "journeys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    journey_key = Column(String(80), unique=True, nullable=False)
+    journey_name = Column(String(160), nullable=False)
+    journey_description = Column(Text, nullable=False, default="")
+    journey_objective = Column(Text, nullable=False, default="")
+    intended_audience = Column(Text, nullable=False, default="")
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class User(Base):
     """Maps to SkillzAge's own `users` table (001_create_users_table).
     This app does NOT create/migrate this table - id is UUID, and the
@@ -349,9 +363,9 @@ class UserProjectAccess(Base):
         nullable=False,
         index=True
     )
-    project_id = Column(
+    journey_id = Column(
         Integer,
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey("journeys.id", ondelete="CASCADE"),
         nullable=False,
         index=True
     )
@@ -378,7 +392,7 @@ class UserProjectAccess(Base):
     )
 
     user = relationship("User")
-    project = relationship("Project")
+    journey = relationship("Journey")
 
 
 # ==========================================================
@@ -395,9 +409,9 @@ class PaymentTransaction(Base):
         nullable=False,
         index=True
     )
-    project_id = Column(
+    journey_id = Column(
         Integer,
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey("journeys.id", ondelete="CASCADE"),
         nullable=False,
         index=True
     )
@@ -432,7 +446,7 @@ class PaymentTransaction(Base):
     )
 
     user = relationship("User")
-    project = relationship("Project")
+    journey = relationship("Journey")
 
 
 # ==========================================================
@@ -443,9 +457,9 @@ class ProjectProductMapping(Base):
     __tablename__ = "project_product_mapping"
 
     id = Column(BigInteger, primary_key=True, index=True)
-    project_id = Column(
+    journey_id = Column(
         Integer,
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey("journeys.id", ondelete="CASCADE"),
         nullable=False,
         index=True
     )
@@ -462,7 +476,7 @@ class ProjectProductMapping(Base):
         server_default=func.now()
     )
 
-    project = relationship("Project")
+    journey = relationship("Journey")
 
 
 # ==========================================================
@@ -479,9 +493,9 @@ class UserProjectDetails(Base):
         nullable=False,
         index=True
     )
-    project_id = Column(
+    journey_id = Column(
         Integer,
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey("journeys.id", ondelete="CASCADE"),
         nullable=False,
         index=True
     )
@@ -498,7 +512,7 @@ class UserProjectDetails(Base):
     )
 
     user = relationship("User")
-    project = relationship("Project")
+    journey = relationship("Journey")
 
 
 # ==========================================================
@@ -509,9 +523,9 @@ class ProjectOnboardingField(Base):
     __tablename__ = "project_onboarding_fields"
 
     id = Column(BigInteger, primary_key=True, index=True)
-    project_id = Column(
+    journey_id = Column(
         Integer,
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey("journeys.id", ondelete="CASCADE"),
         nullable=False,
         index=True
     )
@@ -539,4 +553,4 @@ class ProjectOnboardingField(Base):
         server_default=func.now()
     )
 
-    project = relationship("Project")
+    journey = relationship("Journey")

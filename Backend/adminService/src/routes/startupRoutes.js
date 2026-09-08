@@ -1140,7 +1140,25 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
 router.get("/startup/journeys", async (req, res, next) => {
   try {
     const result = await pool.query(
-      "SELECT * FROM journeys WHERE is_active = TRUE ORDER BY journey_name ASC, id ASC"
+      `
+      SELECT
+        j.id,
+        j.journey_key,
+        j.journey_name,
+        j.journey_description,
+        j.journey_objective,
+        j.intended_audience,
+        j.is_active,
+        ppm.wix_product_id
+      FROM journeys j
+      LEFT JOIN project_product_mapping ppm
+        ON ppm.journey_id = j.id
+       AND ppm.is_active = TRUE
+      WHERE j.is_active = TRUE
+      ORDER BY
+        j.journey_name ASC,
+        j.id ASC
+      `
     );
 
     res.json({ journeys: result.rows });
@@ -1459,6 +1477,115 @@ router.delete("/admin/startup/journeys/:id", requireAuth, requireAdminMiddleware
     next(error);
   }
 });
+
+// ==========================================================
+// JOURNEY <-> WIX PRODUCT MAPPING
+// ==========================================================
+
+router.put(
+  "/admin/startup/journeys/:id/product-mapping",
+  requireAuth,
+  requireAdminMiddleware,
+  async (req, res, next) => {
+    try {
+      const journeyId = normalizeInteger(req.params.id, null);
+      const wixProductId = normalizeText(
+        req.body?.wix_product_id || req.body?.wixProductId,
+        150
+      );
+
+      if (!journeyId) {
+        return res.status(400).json({
+          detail: "A valid journey id is required."
+        });
+      }
+
+      if (!wixProductId) {
+        return res.status(400).json({
+          detail: "wix_product_id is required."
+        });
+      }
+
+      const journeyResult = await pool.query(
+        `
+        SELECT id, journey_name
+        FROM journeys
+        WHERE id = $1
+        LIMIT 1
+        `,
+        [journeyId]
+      );
+
+      if (!journeyResult.rows.length) {
+        return res.status(404).json({
+          detail: "Journey not found."
+        });
+      }
+
+      const result = await pool.query(
+        `
+        INSERT INTO project_product_mapping (
+          journey_id,
+          wix_product_id,
+          is_active
+        )
+        VALUES ($1, $2, TRUE)
+        ON CONFLICT (wix_product_id)
+        DO UPDATE SET
+          journey_id = EXCLUDED.journey_id,
+          is_active = TRUE,
+          updated_at = NOW()
+        RETURNING *
+        `,
+        [journeyId, wixProductId]
+      );
+
+      res.json({
+        success: true,
+        mapping: result.rows[0],
+        journey: journeyResult.rows[0]
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+router.delete(
+  "/admin/startup/journeys/:id/product-mapping",
+  requireAuth,
+  requireAdminMiddleware,
+  async (req, res, next) => {
+    try {
+      const journeyId = normalizeInteger(req.params.id, null);
+
+      if (!journeyId) {
+        return res.status(400).json({
+          detail: "A valid journey id is required."
+        });
+      }
+
+      const result = await pool.query(
+        `
+        UPDATE project_product_mapping
+        SET
+          is_active = FALSE,
+          updated_at = NOW()
+        WHERE journey_id = $1
+        RETURNING *
+        `,
+        [journeyId]
+      );
+
+      res.json({
+        success: true,
+        mappings: result.rows
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 router.get("/admin/startup/journey", requireAuth, async (req, res, next) => {
   try {
