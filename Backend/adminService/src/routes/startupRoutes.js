@@ -1500,12 +1500,6 @@ router.put(
         });
       }
 
-      if (!wixProductId) {
-        return res.status(400).json({
-          detail: "wix_product_id is required."
-        });
-      }
-
       const journeyResult = await pool.query(
         `
         SELECT id, journey_name
@@ -1521,6 +1515,52 @@ router.put(
           detail: "Journey not found."
         });
       }
+
+      // Empty value = remove mapping.
+      if (!wixProductId) {
+        const result = await pool.query(
+          `UPDATE project_product_mapping
+           SET is_active = FALSE,
+               updated_at = NOW()
+           WHERE journey_id = $1
+           RETURNING *`,
+          [journeyId]
+        );
+
+        return res.json({
+          success: true,
+          mapping: result.rows[0] || null,
+          journey: journeyResult.rows[0]
+        });
+      }
+
+      // Do not allow the same Wix product to belong to two journeys.
+      const existingMapping = await pool.query(
+        `SELECT journey_id
+         FROM project_product_mapping
+         WHERE wix_product_id = $1
+           AND is_active = TRUE
+         LIMIT 1`,
+        [wixProductId]
+      );
+
+      if (
+        existingMapping.rows.length &&
+        Number(existingMapping.rows[0].journey_id) !== journeyId
+      ) {
+        return res.status(409).json({
+          detail: "This Wix product is already mapped to another journey."
+        });
+      }
+
+      // Deactivate any previous product mapped to this journey.
+      await pool.query(
+        `UPDATE project_product_mapping
+         SET is_active = FALSE,
+             updated_at = NOW()
+         WHERE journey_id = $1`,
+        [journeyId]
+      );
 
       const result = await pool.query(
         `

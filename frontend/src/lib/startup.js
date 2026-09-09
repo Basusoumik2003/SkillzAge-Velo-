@@ -131,6 +131,20 @@ export async function updateAdminJourney(id, payload) {
   return data;
 }
 
+export const updateJourneyProductMapping = async (
+  journeyId,
+  wixProductId
+) => {
+  const response = await adminApi.put(
+    `/admin/startup/journeys/${journeyId}/product-mapping`,
+    {
+      wix_product_id: String(wixProductId || "").trim()
+    }
+  );
+
+  return response.data;
+};
+
 export async function deleteAdminJourney(id) {
   const { data } = await adminApi.delete(
     `/startup/journeys/${id}`

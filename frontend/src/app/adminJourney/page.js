@@ -26,6 +26,7 @@ import {
   updateAdminJourneyPhase,
   updateAdminJourneyStage,
   updateAdminStageDocument,
+  updateJourneyProductMapping,
   uploadAdminGlobalSource,
   uploadAdminStageDocument
 } from "@/lib/startup";
@@ -60,6 +61,7 @@ const EMPTY_JOURNEY = {
   journey_description: "",
   journey_objective: "",
   intended_audience: "",
+  wix_product_id: "",
   is_active: true
 };
 
@@ -366,11 +368,27 @@ export default function AdminJourneyPage() {
         is_active: Boolean(journeyForm.is_active)
       };
 
+      let savedJourney;
+
       if (journeyForm.id) {
-        await updateAdminJourney(journeyForm.id, payload);
+        savedJourney = await updateAdminJourney(journeyForm.id, payload);
       } else {
-        await createAdminJourney(payload);
+        savedJourney = await createAdminJourney(payload);
       }
+
+      const savedJourneyId =
+        savedJourney?.journey?.id ||
+        savedJourney?.id ||
+        journeyForm.id;
+
+      if (!savedJourneyId) {
+        throw new Error("Journey was saved but no journey id was returned.");
+      }
+
+      await updateJourneyProductMapping(
+        savedJourneyId,
+        journeyForm.wix_product_id
+      );
 
       setJourneyForm(EMPTY_JOURNEY);
       await loadJourneys();

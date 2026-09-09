@@ -86,6 +86,28 @@ export default function JourneysTab({
             />
           </label>
 
+          <div className="grid gap-2">
+            <label className="text-sm font-semibold text-slate-700">
+              Wix Product ID
+            </label>
+
+            <input
+              className={inputClass}
+              placeholder="e.g. dff19c1f-07d8-a265-42f8-e8dfa824cc6e"
+              value={journeyForm.wix_product_id || ""}
+              onChange={(e) =>
+                setJourneyForm({
+                  ...journeyForm,
+                  wix_product_id: e.target.value
+                })
+              }
+            />
+
+            <p className="text-xs text-slate-500">
+              Enter the Wix Stores Product ID used for checkout.
+            </p>
+          </div>
+
           <label className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-black text-slate-700">
             <input
               type="checkbox"
