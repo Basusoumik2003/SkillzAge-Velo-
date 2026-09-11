@@ -6,7 +6,7 @@ import { Layers, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { EmptyState, FieldLabel, Panel, inputClass } from "./ui";
 
 export default function PhasesTab({
-  journeys,
+  services,
   viewJourneyId,
   loadJourney,
   phases,
@@ -32,12 +32,11 @@ export default function PhasesTab({
   return (
     <Panel title="Phases" description="Top-level journey steps, ordered by phase_order." icon={Layers}>
       <label className="mb-6 grid gap-2 sm:max-w-sm">
-        <FieldLabel>Viewing journey</FieldLabel>
+        <FieldLabel>Viewing service</FieldLabel>
         <select value={viewJourneyId} onChange={(event) => loadJourney(event.target.value)} className={inputClass}>
-          {journeys.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.journey_name}
-              {item.is_default ? " (default)" : ""}
+          {services.map((service) => (
+            <option key={service.id} value={service.journeyId}>
+              {service.serviceName}
             </option>
           ))}
         </select>
@@ -46,7 +45,7 @@ export default function PhasesTab({
       <div className="grid gap-6 xl:grid-cols-[1fr_1.2fr]">
         <form onSubmit={savePhase} className="grid gap-4">
           <label className="grid gap-2">
-            <FieldLabel>Journey</FieldLabel>
+            <FieldLabel>Service</FieldLabel>
             <select
               value={phaseForm.journey_id}
               onChange={(event) => {
@@ -58,10 +57,10 @@ export default function PhasesTab({
               }}
               className={inputClass}
             >
-              <option value="">Select journey</option>
-              {journeys.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.journey_name}
+              <option value="">Select service</option>
+              {services.map((service) => (
+                <option key={service.id} value={service.journeyId}>
+                  {service.serviceName}
                 </option>
               ))}
             </select>

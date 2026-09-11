@@ -594,6 +594,82 @@ async function fetchRetrievedContext({ userId, profileId, ideaId, phaseId, stage
   };
 }
 
+// ==========================================================
+// ADMIN - SERVICES FROM WIX CMS
+// ==========================================================
+
+router.get(
+  "/startup/services",
+  requireAuth,
+  requireAdminMiddleware,
+  async (req, res, next) => {
+    try {
+      const wixServicesUrl =
+        process.env.SKILLZAGE_WIX_SERVICES_URL;
+
+      const wixAdminServicesKey =
+        process.env.SKILLZAGE_ADMIN_SERVICES_KEY;
+
+      if (!wixServicesUrl) {
+        throw new Error(
+          "SKILLZAGE_WIX_SERVICES_URL is not configured."
+        );
+      }
+
+      if (!wixAdminServicesKey) {
+        throw new Error(
+          "SKILLZAGE_ADMIN_SERVICES_KEY is not configured."
+        );
+      }
+
+      const wixResponse = await fetch(
+        wixServicesUrl,
+        {
+          method: "GET",
+          headers: {
+            "x-skillzage-admin-key":
+              wixAdminServicesKey
+          }
+        }
+      );
+
+      if (!wixResponse.ok) {
+        const responseText =
+          await wixResponse.text();
+
+        throw new Error(
+          `Wix Services request failed: ${wixResponse.status} ${responseText}`
+        );
+      }
+
+      const data =
+        await wixResponse.json();
+
+      const services = Array.isArray(
+        data?.services
+      )
+        ? data.services
+        : [];
+
+      console.log(
+        "[ADMIN SERVICES] Wix services received:",
+        services
+      );
+
+      res.json({
+        services
+      });
+    } catch (error) {
+      console.error(
+        "[ADMIN SERVICES] ERROR:",
+        error
+      );
+
+      next(error);
+    }
+  }
+);
+
 const STARTUP_COACHING_GUARDRAIL = `You are an AI startup mentor coaching a student founder inside a structured program.
 Rules you always follow:
 - Coach step by step. Never hand over a finished business plan, pitch deck, or "do it for them" answer — ask a clarifying question or point to the next small action instead.

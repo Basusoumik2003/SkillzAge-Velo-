@@ -113,6 +113,15 @@ export async function listAdminJourneys() {
   return data;
 }
 
+// ======================================================
+// ADMIN - SERVICES FROM WIX CMS
+// ======================================================
+
+export async function listAdminServices() {
+  const { data } = await adminApi.get("/startup/services");
+  return data;
+}
+
 export async function createAdminJourney(payload) {
   const { data } = await adminApi.post(
     "/startup/journeys",

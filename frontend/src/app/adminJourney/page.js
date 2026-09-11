@@ -7,26 +7,22 @@ import useRequireAuth from "@/lib/useRequireAuth";
 import MentorManager from "@/components/adminDashboard/MentorManager";
 import {
   createAdminGlobalSource,
-  createAdminJourney,
   createAdminJourneyPhase,
   createAdminJourneyStage,
   createAdminStageDocument,
   deleteAdminGlobalSource,
-  deleteAdminJourney,
   deleteAdminJourneyPhase,
   deleteAdminJourneyStage,
   deleteAdminStageDocument,
   listAdminGlobalSources,
   listAdminJourney,
-  listAdminJourneys,
+  listAdminServices,
   listAdminStageDocuments,
   listAdminStartupMentors,
   updateAdminGlobalSource,
-  updateAdminJourney,
   updateAdminJourneyPhase,
   updateAdminJourneyStage,
   updateAdminStageDocument,
-  updateJourneyProductMapping,
   uploadAdminGlobalSource,
   uploadAdminStageDocument
 } from "@/lib/startup";
@@ -34,7 +30,6 @@ import {
 import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
 import DashboardTab from "./components/DashboardTab";
-import JourneysTab from "./components/JourneysTab";
 import PhasesTab from "./components/PhasesTab";
 import StagesTab from "./components/StagesTab";
 import StageDocumentsTab from "./components/StageDocumentsTab";
@@ -51,17 +46,6 @@ const EMPTY_PHASE = {
   phase_objective: "",
   intended_audience: "",
   default_agent_key: "",
-  is_active: true
-};
-
-const EMPTY_JOURNEY = {
-  id: null,
-  journey_key: "",
-  journey_name: "",
-  journey_description: "",
-  journey_objective: "",
-  intended_audience: "",
-  wix_product_id: "",
   is_active: true
 };
 
@@ -172,10 +156,9 @@ export default function AdminJourneyPage() {
 
   const [mentors, setMentors] = useState([]);
   const [journey, setJourney] = useState([]);
-  const [journeys, setJourneys] = useState([]);
+  const [services, setServices] = useState([]);
   const [journeyStats, setJourneyStats] = useState({});
   const [viewJourneyId, setViewJourneyId] = useState("");
-  const [journeyForm, setJourneyForm] = useState(EMPTY_JOURNEY);
 
   const [phaseForm, setPhaseForm] = useState(EMPTY_PHASE);
   const [stageForm, setStageForm] = useState(EMPTY_STAGE);
@@ -204,8 +187,7 @@ export default function AdminJourneyPage() {
     [phases]
   );
 
-  // Switching tabs clears the search box — a stale filter carried over from
-  // "Journeys" would silently hide everything on "Stage Documents".
+  // Switching tabs clears the search box so a stale filter cannot hide content.
   const changeTab = (tabKey) => {
     setActiveTab(tabKey);
     setSearchQuery("");
@@ -237,35 +219,49 @@ export default function AdminJourneyPage() {
     }
   };
 
-  const loadJourneys = async () => {
+  const loadServices = async () => {
     try {
-      const data = await listAdminJourneys();
-      const list = Array.isArray(data?.journeys) ? data.journeys : [];
-      setJourneys(list);
-      loadJourneyStats(list);
+      const data = await listAdminServices();
+      const list = Array.isArray(data?.services)
+        ? data.services
+            .map((service) => ({
+              id: service.serviceId || service._id || service.id,
+              serviceName: service.serviceName || service.name || "Service",
+              serviceCode: service.serviceCode || "",
+              journeyId: service.journeyId || service.journey_id || "",
+              active: service.active !== false
+            }))
+            .filter((service) => service.active && service.journeyId)
+        : [];
+
+      setServices(list);
+
+      if (list.length > 0) {
+        const firstJourneyId = String(list[0].journeyId);
+        setViewJourneyId(firstJourneyId);
+        await loadJourney(firstJourneyId);
+      }
+
+      await loadServiceStats(list);
     } catch (err) {
-      setError(err?.response?.data?.detail || err?.message || "Unable to load journeys.");
+      setError(err?.response?.data?.detail || err?.message || "Unable to load services.");
     }
   };
 
   // Dashboard-only aggregation: the nested phase/stage payload only ever
-  // covers the currently-viewed journey, so a real "phases/stages per
-  // journey" overview means fetching each journey's nested tree once. Not
-  // wired into every save — only re-run when the journeys list itself
-  // changes (create/update/delete), which is cheap enough at admin-panel
-  // scale.
-  const loadJourneyStats = async (list) => {
+  // covers the currently-viewed journey, so fetch each service's journey tree.
+  const loadServiceStats = async (list) => {
     try {
       const entries = await Promise.all(
-        (list || []).map(async (item) => {
-          const data = await listAdminJourney(item.id);
-          const journeyPhases = Array.isArray(data?.journey) ? data.journey : [];
-          const stageCount = journeyPhases.reduce((sum, phase) => sum + (phase.stages || []).length, 0);
-          const activeStageCount = journeyPhases.reduce(
+        (list || []).map(async (service) => {
+          const data = await listAdminJourney(service.journeyId);
+          const servicePhases = Array.isArray(data?.journey) ? data.journey : [];
+          const stageCount = servicePhases.reduce((sum, phase) => sum + (phase.stages || []).length, 0);
+          const activeStageCount = servicePhases.reduce(
             (sum, phase) => sum + (phase.stages || []).filter((stage) => stage.is_active).length,
             0
           );
-          return [item.id, { phaseCount: journeyPhases.length, stageCount, activeStageCount }];
+          return [service.id, { phaseCount: servicePhases.length, stageCount, activeStageCount, journeyId: service.journeyId }];
         })
       );
       setJourneyStats(Object.fromEntries(entries));
@@ -310,8 +306,7 @@ export default function AdminJourneyPage() {
   };
 
   useEffect(() => {
-    loadJourney();
-    loadJourneys();
+    loadServices();
     loadMentors();
     loadDocuments();
     loadGlobalSources();
@@ -344,81 +339,6 @@ export default function AdminJourneyPage() {
   const resetGlobalSource = () => {
     setGlobalSourceForm(EMPTY_GLOBAL_SOURCE);
     setGlobalSourceFile(null);
-  };
-  const resetJourney = () => setJourneyForm(EMPTY_JOURNEY);
-
-  const saveJourney = async (event) => {
-    event.preventDefault();
-
-    if (!journeyForm.journey_key.trim() || !journeyForm.journey_name.trim()) {
-      setError("Journey key and journey name are required.");
-      return;
-    }
-
-    setSaving(true);
-    setError("");
-
-    try {
-      const payload = {
-        journey_key: journeyForm.journey_key.trim(),
-        journey_name: journeyForm.journey_name.trim(),
-        journey_description: journeyForm.journey_description,
-        journey_objective: journeyForm.journey_objective,
-        intended_audience: journeyForm.intended_audience,
-        is_active: Boolean(journeyForm.is_active)
-      };
-
-      let savedJourney;
-
-      if (journeyForm.id) {
-        savedJourney = await updateAdminJourney(journeyForm.id, payload);
-      } else {
-        savedJourney = await createAdminJourney(payload);
-      }
-
-      const savedJourneyId =
-        savedJourney?.journey?.id ||
-        savedJourney?.id ||
-        journeyForm.id;
-
-      if (!savedJourneyId) {
-        throw new Error("Journey was saved but no journey id was returned.");
-      }
-
-      await updateJourneyProductMapping(
-        savedJourneyId,
-        journeyForm.wix_product_id
-      );
-
-      setJourneyForm(EMPTY_JOURNEY);
-      await loadJourneys();
-    } catch (err) {
-      setError(err?.response?.data?.detail || err?.message || "Unable to save journey.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const editJourney = (item) => {
-    setJourneyForm({ ...EMPTY_JOURNEY, ...item });
-  };
-
-  const removeJourney = async (item) => {
-    if (!window.confirm(`Delete journey "${item.journey_name}"?`)) {
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      await deleteAdminJourney(item.id);
-      await loadJourneys();
-      await loadJourney(String(item.id) === viewJourneyId ? undefined : viewJourneyId);
-    } catch (err) {
-      setError(err?.response?.data?.detail || err?.message || "Unable to delete journey.");
-    } finally {
-      setSaving(false);
-    }
   };
 
   const saveStage = async (event) => {
@@ -453,7 +373,7 @@ export default function AdminJourneyPage() {
       // Deliverables editor below needs a real stage_id to do anything.
       loadStageIntoForm(savedStage);
       await loadJourney(viewJourneyId);
-      loadJourneyStats(journeys);
+      loadServiceStats(services);
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || "Unable to save stage.");
     } finally {
@@ -465,7 +385,7 @@ export default function AdminJourneyPage() {
     event.preventDefault();
 
     if (!phaseForm.journey_id) {
-      setError("Please select a journey.");
+      setError("Please select a service.");
       return;
     }
 
@@ -501,7 +421,7 @@ export default function AdminJourneyPage() {
       // backend's "effective" default is — otherwise a phase saved onto a
       // non-default journey never shows up in the list below.
       await loadJourney(savedJourneyId);
-      loadJourneyStats(journeys);
+      loadServiceStats(services);
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || "Unable to save phase.");
     } finally {
@@ -547,7 +467,7 @@ export default function AdminJourneyPage() {
     try {
       await deleteAdminJourneyPhase(phase.id);
       await loadJourney(viewJourneyId);
-      loadJourneyStats(journeys);
+      loadServiceStats(services);
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || "Unable to delete phase.");
     } finally {
@@ -565,7 +485,7 @@ export default function AdminJourneyPage() {
     try {
       await deleteAdminJourneyStage(stage.id);
       await loadJourney(viewJourneyId);
-      loadJourneyStats(journeys);
+      loadServiceStats(services);
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || "Unable to delete stage.");
     } finally {
@@ -784,7 +704,6 @@ export default function AdminJourneyPage() {
   }, [phases, stages, documents, globalSources]);
 
   const sidebarCounts = {
-    journeys: journeys.length,
     phases: phases.length,
     stages: stages.length,
     "stage-documents": documents.length,
@@ -822,8 +741,8 @@ export default function AdminJourneyPage() {
 
             {activeTab === "dashboard" ? (
               <DashboardTab
-                journeys={journeys}
-                journeyStats={journeyStats}
+                services={services}
+                serviceStats={journeyStats}
                 documents={documents}
                 globalSources={globalSources}
                 mentors={mentors}
@@ -833,23 +752,9 @@ export default function AdminJourneyPage() {
               />
             ) : null}
 
-            {activeTab === "journeys" ? (
-              <JourneysTab
-                journeys={journeys}
-                journeyForm={journeyForm}
-                setJourneyForm={setJourneyForm}
-                saveJourney={saveJourney}
-                editJourney={editJourney}
-                removeJourney={removeJourney}
-                resetJourney={resetJourney}
-                saving={saving}
-                searchQuery={searchQuery}
-              />
-            ) : null}
-
             {activeTab === "phases" ? (
               <PhasesTab
-                journeys={journeys}
+                services={services}
                 viewJourneyId={viewJourneyId}
                 loadJourney={loadJourney}
                 phases={phases}

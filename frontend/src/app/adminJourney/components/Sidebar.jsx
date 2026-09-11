@@ -2,7 +2,6 @@
 
 import {
   FileText,
-  Flag,
   Globe2,
   LayoutDashboard,
   Layers,
@@ -18,7 +17,6 @@ const NAV_GROUPS = [
     title: "Program Management",
     items: [
       { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { key: "journeys", label: "Journeys", icon: Flag },
       { key: "phases", label: "Phases", icon: Layers },
       { key: "stages", label: "Stages", icon: ListChecks }
     ]
