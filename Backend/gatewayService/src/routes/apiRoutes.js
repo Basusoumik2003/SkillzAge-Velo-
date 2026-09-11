@@ -4,6 +4,13 @@ import { config } from "../config.js";
 
 const router = express.Router();
 
+function rewritePythonPath(originalUrl) {
+  const path = originalUrl.replace(/^\/api(?=\/|$)/, "");
+  // FastAPI defines the chat POST handler at /chat/. Avoid a 307 redirect
+  // for POST /api/chat, which some clients/proxies do not replay safely.
+  return path === "/chat" ? "/chat/" : path;
+}
+
 const authProxy = createProxyHandler({ targetBaseUrl: config.services.auth });
 const profileProxy = createProxyHandler({ targetBaseUrl: config.services.profile });
 const adminProxy = createProxyHandler({ targetBaseUrl: config.services.admin });
@@ -17,22 +24,22 @@ const paymentProxy = createProxyHandler({ targetBaseUrl: config.services.payment
 const invoiceProxy = createProxyHandler({ targetBaseUrl: config.services.invoice });
 const pythonProxy = createProxyHandler({
   targetBaseUrl: config.services.python,
-  rewritePath: (originalUrl) => originalUrl.replace(/^\/api(?=\/|$)/, "")
+  rewritePath: rewritePythonPath
 });
 
 router.use("/auth", authProxy);
 router.use("/profile", profileProxy);
 router.use("/chat", pythonProxy);
 router.use("/project", pythonProxy);
-router.use("/github", pythonProxy);
+
 router.use("/deliverables", pythonProxy);
 router.use("/contact", contactProxy);
 router.use("/admin", adminProxy);
 router.use("/search", searchProxy);
 router.use("/startup", adminProxy);
-router.use("/themes", adminProxy);
+
 router.use("/payment", paymentProxy);
-router.use("/invoices", invoiceProxy);
+
 router.use("/dashboard/payments", paymentProxy);
 router.use("/dashboard", userProxy);
 router.use("/create-order", paymentProxy);

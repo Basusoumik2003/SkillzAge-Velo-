@@ -36,7 +36,10 @@ const authProxy = createProxyHandler({
   targetBaseUrl: config.services.auth,
   rewritePath: (originalUrl) => originalUrl.replace(/^\/auth(?=\/|$)/, "/api/auth")
 });
-const pythonProxy = createProxyHandler({ targetBaseUrl: config.services.python });
+const pythonProxy = createProxyHandler({
+  targetBaseUrl: config.services.python,
+  rewritePath: (originalUrl) => (originalUrl === "/chat" ? "/chat/" : originalUrl)
+});
 app.use("/auth", authProxy);
 app.use("/chat", pythonProxy);
 app.use("/project", pythonProxy);
