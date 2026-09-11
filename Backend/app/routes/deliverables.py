@@ -6,6 +6,8 @@ app/services/deliverable_review_service.py for the business logic."""
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
@@ -31,6 +33,23 @@ from app.schemas.deliverables import (
 from app.services import deliverable_review_service, deliverable_service
 
 router = APIRouter(prefix="/deliverables", tags=["deliverables"])
+logger = logging.getLogger(__name__)
+
+
+def _run_automatic_ai_review(db: Session, submission_id: int):
+    """Review a student submission immediately after it is complete.
+
+    File submissions call this after their file is attached; text/URL
+    submissions call it after the submission row is created. A review outage
+    must not turn a successful upload into a failed upload, so the submission
+    stays available for retry while the exception is logged.
+    """
+    try:
+        return deliverable_review_service.create_ai_review(db, submission_id)
+    except Exception:
+        db.rollback()
+        logger.exception("Automatic AI review failed for submission %s", submission_id)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +147,12 @@ def submit_deliverable(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return deliverable_service.submit_deliverable(db, user.id, payload)
+    submission = deliverable_service.submit_deliverable(db, user.id, payload)
+    # Text, URL, and GitHub submissions are complete as soon as their row is
+    # created. File submissions are reviewed after attach_submission_file().
+    if payload.submission_type.value != "file":
+        _run_automatic_ai_review(db, submission.id)
+    return submission
 
 
 @router.post("/student/deliverables/{deliverable_id}/resubmit", response_model=DeliverableSubmissionResponse, status_code=201)
@@ -142,7 +166,10 @@ def resubmit_deliverable(
     # next_attempt_number() in the service bumps attempt_number and the
     # deliverable_id in the path/body must agree.
     payload = payload.model_copy(update={"deliverable_id": deliverable_id})
-    return deliverable_service.submit_deliverable(db, user.id, payload)
+    submission = deliverable_service.submit_deliverable(db, user.id, payload)
+    if payload.submission_type.value != "file":
+        _run_automatic_ai_review(db, submission.id)
+    return submission
 
 
 @router.post("/student/submissions/{submission_id}/files/presign", response_model=PresignedUploadResponse)
@@ -163,7 +190,11 @@ def attach_submission_file(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    return deliverable_service.attach_submission_file(db, submission_id, user.id, payload)
+    submission_file = deliverable_service.attach_submission_file(db, submission_id, user.id, payload)
+    # The S3 upload is already attached and owned by the student, so the
+    # submission is now ready for the same AI review used by admins.
+    _run_automatic_ai_review(db, submission_id)
+    return submission_file
 
 
 @router.get("/student/submissions/{submission_id}", response_model=DeliverableSubmissionResponse)

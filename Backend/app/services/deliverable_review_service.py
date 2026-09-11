@@ -98,10 +98,11 @@ def create_ai_review(db: Session, submission_id: int) -> DeliverableReview:
                 {
                     "document_url": latest_file.s3_url,
                     "document_name": latest_file.file_name,
-                    "stage_title": deliverable_name,
-                    "deliverable": deliverable_name,
-                    "objective": deliverable.deliverable_description if deliverable else "",
-                    "stage_context": "",
+                    "stage_title": (stage or {}).get("stage_name") or deliverable_name,
+                    "deliverable": (stage or {}).get("expected_outcome") or deliverable_name,
+                    "objective": (stage or {}).get("stage_objective") or (deliverable.deliverable_description if deliverable else ""),
+                    "stage_context": (stage or {}).get("stage_context") or "",
+                    "readiness_criteria": (stage or {}).get("readiness_criteria") or "",
                     "user_id": str(submission.user_id),
                     "project_name": "startup_journey_deliverable",
                 }

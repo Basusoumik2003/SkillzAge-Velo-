@@ -272,7 +272,41 @@ async function fetchStageRows({ journeyId = null } = {}) {
      ORDER BY js.phase_id ASC, js.stage_order ASC, js.id ASC`,
     [journeyId]
   );
-  return rows;
+
+  // Deliverables are managed by the separate deliverables service, but the
+  // workspace still needs them when it builds a student's current stage.
+  // Keep the journey endpoint backwards-compatible while older deployments
+  // are still waiting for the stage_deliverables migration.
+  if (!rows.length) return rows;
+
+  try {
+    const stageIds = rows.map((row) => Number(row.id)).filter(Number.isFinite);
+    if (!stageIds.length) return rows.map((row) => ({ ...row, deliverables: [] }));
+
+    const deliverableResult = await pool.query(
+      `SELECT id, stage_id, deliverable_name, deliverable_description,
+              deliverable_type, is_required, display_order
+       FROM stage_deliverables
+       WHERE stage_id = ANY($1::int[])
+       ORDER BY stage_id ASC, display_order ASC, id ASC`,
+      [stageIds]
+    );
+    const byStageId = new Map();
+    deliverableResult.rows.forEach((item) => {
+      const key = Number(item.stage_id);
+      const list = byStageId.get(key) || [];
+      list.push(item);
+      byStageId.set(key, list);
+    });
+    return rows.map((row) => ({
+      ...row,
+      deliverables: byStageId.get(Number(row.id)) || []
+    }));
+  } catch (error) {
+    if (error?.code !== "42P01") throw error;
+    console.warn("stage_deliverables table is not available; continuing without configured deliverables");
+    return rows.map((row) => ({ ...row, deliverables: [] }));
+  }
 }
 
 /** Which stage_ids this user has a 'completed' row for in student_stage_progress

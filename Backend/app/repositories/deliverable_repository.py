@@ -28,6 +28,8 @@ def get_stage(db: Session, stage_id: int) -> Optional[dict[str, Any]]:
         text(
             """
             SELECT id, phase_id, stage_name, stage_order, is_active,
+                   stage_context, stage_objective, expected_outcome,
+                   readiness_criteria, recommended_actions,
                    requires_deliverables, pass_score_threshold
             FROM journey_stages
             WHERE id = :stage_id

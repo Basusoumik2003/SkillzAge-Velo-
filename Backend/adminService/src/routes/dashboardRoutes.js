@@ -1225,8 +1225,11 @@ router.post(
   requireAuth,
   asyncHandler(async (req, res) => {
     await ensureUserPresenceSchema();
-    const userId = Number(req.auth?.userId);
-    if (!Number.isFinite(userId) || userId <= 0) {
+    // Wix-issued identities are UUIDs in this deployment. Do not coerce them
+    // to Number, otherwise every heartbeat is rejected and presence appears
+    // offline even when the user is active.
+    const userId = String(req.auth?.userId || "").trim();
+    if (!userId) {
       return res.status(401).json({ detail: "Invalid authorization token." });
     }
 

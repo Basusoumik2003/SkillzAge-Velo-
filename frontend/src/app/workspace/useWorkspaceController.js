@@ -1204,7 +1204,7 @@ export default function useWorkspaceController() {
       // and 403s for normal students, which would blank the roster.
       if (catalogProject?.journey_id) return;
       try {
-        const isStartupJourney = String(projectName).trim().toLowerCase() === "startup journey";
+        const isStartupJourney = String(projectName).trim().toLowerCase().startsWith("startup journey");
         const data = isStartupJourney ? await getStartupMentors() : await getDashboardMentors();
         const mentorList = Array.isArray(data?.mentors) ? data.mentors : Array.isArray(data?.startup_mentors) ? data.startup_mentors : [];
         const loaded = mentorList
@@ -1554,12 +1554,17 @@ export default function useWorkspaceController() {
               stage_context: stage?.stage_context || "",
               objective: stage?.stage_objective || "",
               deliverable: stage?.expected_outcome || "",
+              deliverables: Array.isArray(stage?.deliverables)
+                ? stage.deliverables
+                : [],
               readiness_criteria:
                 stage?.readiness_criteria || "",
               recommended_actions:
                 stage?.recommended_actions || "",
               document_required: Boolean(
-                stage?.document_required
+                stage?.document_required ||
+                stage?.requires_deliverables ||
+                (Array.isArray(stage?.deliverables) && stage.deliverables.length)
               ),
               link_submission_required: Boolean(
                 stage?.link_submission_required
@@ -1588,7 +1593,10 @@ export default function useWorkspaceController() {
         // student_stage_progress). Rebuild the local progress maps from it and
         // land the student on their first still-open stage instead of Phase 1.
 
-        const PROGRESS_PROJECT = "Startup Journey";
+        // Keep the display title human-readable, but isolate all persisted
+        // chat/progress keys per Wix-selected journey.
+        const startupProjectKey = `Startup Journey:${resolvedJourneyId}`;
+        const PROGRESS_PROJECT = startupProjectKey;
         const completedStagesMap = {};
         const understoodStagesMap = {};
         const completedPhaseTitles = [];
@@ -1636,15 +1644,24 @@ export default function useWorkspaceController() {
         // 12. UPDATE REACT STATE
         // ==================================================
 
+        // A startup journey is selected from Wix and can reuse the same
+        // browser session as an older workspace. Do not carry that session's
+        // global chat into the newly selected journey; stage history is loaded
+        // separately below using the current stage key.
+        setMessages([]);
+        setStageMessagesByKey({});
+        setHistoryLoadedProject("");
+        setChatServiceAvailable(true);
+
         setWorkspaceMode("backend");
         setWorkspaceError("");
         setJourneyNotSelected(false);
         setWorkspaceClosed({ closed: false, message: "" });
         setCatalogProject(startupProject);
-        // projectName stays the "Startup Journey" sentinel that the mentor-load
-        // and catalog-load effects key off. The human-readable journey name is
-        // carried on catalogProject (title / journey_name) for display.
-        setProjectName("Startup Journey");
+        // The human-readable journey name stays on catalogProject. The
+        // internal key is unique so a different Wix journey cannot reuse this
+        // journey's chat history or stage progress.
+        setProjectName(startupProjectKey);
         setMethodState({
           current_step: resumeStep,
           tasks: startupProject.steps.map(
@@ -2204,6 +2221,7 @@ export default function useWorkspaceController() {
 
   useEffect(() => {
     if (!ready || !projectName) return;
+    if (startupJourneyId) return;
     if (chatCacheHydratedProjectRef.current === projectName) return;
     chatCacheHydratedProjectRef.current = projectName;
     const cached = readChatCache(projectName);
@@ -2212,18 +2230,19 @@ export default function useWorkspaceController() {
     if (Object.keys(cached.stageMessagesByKey || {}).length) {
       setStageMessagesByKey((prev) => ({ ...prev, ...cached.stageMessagesByKey }));
     }
-  }, [projectName, ready]);
+  }, [projectName, ready, startupJourneyId]);
 
   useEffect(() => {
     if (!ready || !projectName) return;
+    if (startupJourneyId) return;
     const hasProjectMessages = Array.isArray(messages) && messages.length > 0;
     const hasStageMessages = Object.keys(stageMessagesByKey || {}).length > 0;
     if (!hasProjectMessages && !hasStageMessages) return;
     writeChatCache(projectName, { messages, stageMessagesByKey });
-  }, [messages, projectName, ready, stageMessagesByKey]);
+  }, [messages, projectName, ready, stageMessagesByKey, startupJourneyId]);
 
   useEffect(() => {
-    if (!ready || !authReady || !projectName || workspaceMode === "demo") return;
+    if (!ready || !authReady || !projectName || startupJourneyId || workspaceMode === "demo") return;
     let active = true;
     const loadCatalog = async () => {
       if (projectName === "Startup Journey") return;
@@ -2298,10 +2317,10 @@ export default function useWorkspaceController() {
     return () => {
       active = false;
     };
-  }, [authReady, projectName, ready, workspaceMode]);
+  }, [authReady, projectName, ready, startupJourneyId, workspaceMode]);
 
   useEffect(() => {
-    if (!ready || !authReady || !projectName || historyLoadedProject === projectName || workspaceMode === "demo") return;
+    if (!ready || !authReady || !projectName || startupJourneyId || historyLoadedProject === projectName || workspaceMode === "demo") return;
     let cancelled = false;
     async function loadChatHistory() {
       try {
@@ -2338,10 +2357,10 @@ export default function useWorkspaceController() {
     return () => {
       cancelled = true;
     };
-  }, [authReady, currentStageKey, historyLoadedProject, projectName, ready, workspaceMode]);
+  }, [authReady, currentStageKey, historyLoadedProject, projectName, ready, startupJourneyId, workspaceMode]);
 
   useEffect(() => {
-    if (!ready || !authReady || !projectName || !currentStageKey || (taskViewByStep[selectedPoint] || "about") !== "stage" || workspaceMode === "demo") return;
+    if (!ready || !authReady || !projectName || !currentStageKey || !startupJourneyId || (taskViewByStep[selectedPoint] || "about") !== "stage" || workspaceMode === "demo") return;
     let cancelled = false;
     async function loadCurrentStageChatHistory() {
       try {
@@ -2386,7 +2405,7 @@ export default function useWorkspaceController() {
       } catch (err) {
         console.error("Could not load current stage chat history", err);
         setChatServiceAvailable(false);
-        const cached = readChatCache(projectName);
+        const cached = startupJourneyId ? null : readChatCache(projectName);
         const cachedStageMessages = cached?.stageMessagesByKey?.[currentStageKey];
         if (!cancelled && Array.isArray(cachedStageMessages) && cachedStageMessages.length) {
           setStageMessagesByKey((prev) => ({ ...prev, [currentStageKey]: prev[currentStageKey]?.length ? prev[currentStageKey] : cachedStageMessages }));
@@ -2397,7 +2416,7 @@ export default function useWorkspaceController() {
     return () => {
       cancelled = true;
     };
-  }, [activeStageAgentKey, activeStageData, activeStageIndex, activeStageMentor, authReady, currentStageKey, projectName, ready, selectedPoint, selectedPointData, stageDocuments, taskViewByStep, workspaceMode]);
+  }, [activeStageAgentKey, activeStageData, activeStageIndex, activeStageMentor, authReady, currentStageKey, projectName, ready, selectedPoint, selectedPointData, stageDocuments, startupJourneyId, taskViewByStep, workspaceMode]);
 
   useEffect(() => {
     if (!workspacePoints.length || !workspacePositionKey || workspaceMode === "demo") return;
@@ -3412,13 +3431,39 @@ export default function useWorkspaceController() {
           : `${timeGreeting()}, ${studentName}! Welcome to the ${projectTitle} project. We are running this exactly like a real industry engagement - so before jumping into execution, let us make sure you have the full business picture. Take your time reading through the context; it will make everything that follows much smoother!`
       });
     }
-    const objective = String(activeStageData.objective || activeStageData.stage_context || "").trim();
+    const context = String(activeStageData.stage_context || "").trim();
+    if (context) {
+      items.push({ role: "assistant", agent, kind: "stage-detail", label: "Context", content: context });
+    }
+    const objective = String(activeStageData.objective || "").trim();
     if (objective) {
       items.push({ role: "assistant", agent, kind: "stage-detail", label: "Objective", content: objective });
     }
     const deliverable = String(activeStageData.deliverable || "").trim();
     if (deliverable) {
-      items.push({ role: "assistant", agent, kind: "stage-detail", label: "Deliverable", content: deliverable });
+      items.push({ role: "assistant", agent, kind: "stage-detail", label: "Expected outcome", content: deliverable });
+    }
+    const configuredDeliverables = Array.isArray(activeStageData.deliverables)
+      ? activeStageData.deliverables
+          .map((item) => String(item?.deliverable_name || "").trim())
+          .filter(Boolean)
+      : [];
+    if (configuredDeliverables.length) {
+      items.push({
+        role: "assistant",
+        agent,
+        kind: "stage-detail",
+        label: "Documents to submit",
+        content: configuredDeliverables.join("\n")
+      });
+    }
+    const readinessCriteria = String(activeStageData.readiness_criteria || "").trim();
+    if (readinessCriteria) {
+      items.push({ role: "assistant", agent, kind: "stage-detail", label: "Readiness criteria", content: readinessCriteria });
+    }
+    const recommendedActions = String(activeStageData.recommended_actions || "").trim();
+    if (recommendedActions) {
+      items.push({ role: "assistant", agent, kind: "stage-detail", label: "Recommended actions", content: recommendedActions });
     }
     if (activeStageData.github_integration_required) {
       items.push({

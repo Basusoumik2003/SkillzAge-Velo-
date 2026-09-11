@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
+from sqlalchemy import text
 
 from app.db.database import Base, engine
 from app.db import github_models, models  # noqa: F401
@@ -31,6 +32,50 @@ logging.basicConfig(
 logger = logging.getLogger("internlabs-api")
 
 Base.metadata.create_all(bind=engine)
+
+
+def ensure_deliverable_schema() -> None:
+    """Keep existing PostgreSQL installs compatible with newer deliverables.
+
+    ``create_all`` does not alter tables that already exist. These columns were
+    added after the first deliverables migration, so an older deployment can
+    otherwise fail every admin create request while fresh databases work.
+    """
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE journey_stages "
+                "ADD COLUMN IF NOT EXISTS requires_deliverables "
+                "BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE journey_stages "
+                "ADD COLUMN IF NOT EXISTS pass_score_threshold "
+                "INTEGER NOT NULL DEFAULT 60"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE stage_deliverables "
+                "ADD COLUMN IF NOT EXISTS template_url "
+                "TEXT NOT NULL DEFAULT ''"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE stage_deliverables "
+                "ADD COLUMN IF NOT EXISTS template_original_filename "
+                "VARCHAR(255) NOT NULL DEFAULT ''"
+            )
+        )
+
+
+ensure_deliverable_schema()
 
 app = FastAPI(title="InternLabs API", version="1.0.0")
 
