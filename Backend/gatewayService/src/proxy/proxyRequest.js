@@ -32,6 +32,14 @@ export function createProxyHandler({ targetBaseUrl, rewritePath }) {
       const requestPath = rewritePath ? rewritePath(req.originalUrl, req) : req.originalUrl;
       const targetUrl = new URL(requestPath, base);
 
+      console.log("[GATEWAY PROXY]", {
+        method: req.method,
+        originalUrl: req.originalUrl,
+        requestPath,
+        targetBaseUrl,
+        targetUrl: targetUrl.toString()
+      });
+
       const headers = {};
       for (const [key, value] of Object.entries(req.headers || {})) {
         if (!value) continue;
@@ -60,6 +68,11 @@ export function createProxyHandler({ targetBaseUrl, rewritePath }) {
         method,
         headers,
         body
+      });
+
+      console.log("[GATEWAY PROXY RESPONSE]", {
+        targetUrl: targetUrl.toString(),
+        status: upstream.status
       });
 
       res.status(upstream.status);
