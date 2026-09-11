@@ -16,7 +16,7 @@ import {
   deleteAdminStageDocument,
   listAdminGlobalSources,
   listAdminJourney,
-  listAdminJourneys,
+  listAdminServices,
   listAdminStageDocuments,
   listAdminStartupMentors,
   updateAdminGlobalSource,
@@ -221,33 +221,126 @@ export default function AdminJourneyPage() {
 
   const loadServices = async () => {
     try {
-      const data = await listAdminJourneys();
-      const list = Array.isArray(data?.journeys)
-        ? data.journeys
-            .map((journeyRecord) => ({
-              id: journeyRecord.id,
-              serviceName: journeyRecord.journey_name || "Service",
-              serviceCode: journeyRecord.journey_key || "",
-              serviceDescription: journeyRecord.journey_description || "",
-              description: journeyRecord.journey_description || "",
-              journeyId: journeyRecord.id,
-              wixProductId: journeyRecord.wix_product_id || "",
-              active: journeyRecord.is_active !== false
-            }))
-            .filter((service) => service.active && service.journeyId)
+      console.log("[ADMIN SERVICES] Loading services from Wix CMS...");
+
+      const data = await listAdminServices();
+
+      console.log("[ADMIN SERVICES] API response:", data);
+
+      const rawServices = Array.isArray(data?.services)
+        ? data.services
         : [];
+
+      // Wix CMS Services is the source of truth for the Services list.
+      // Do NOT require journeyId here. A newly-added CMS service should
+      // still appear even if it has not been mapped to a journey yet.
+      const list = rawServices
+        .map((service) => {
+          const journeyId =
+            service.journeyId ??
+            service.journey_id ??
+            service.journeyID ??
+            "";
+
+          return {
+            id:
+              service.serviceId ??
+              service._id ??
+              service.id,
+
+            serviceName:
+              service.serviceName ??
+              service.service_name ??
+              service.name ??
+              "Service",
+
+            serviceCode:
+              service.serviceCode ??
+              service.service_code ??
+              "",
+
+            serviceDescription:
+              service.serviceDescription ??
+              service.service_description ??
+              service.description ??
+              "",
+
+            description:
+              service.description ??
+              service.serviceDescription ??
+              service.service_description ??
+              "",
+
+            shortDescription:
+              service.shortDescription ??
+              service.short_description ??
+              "",
+
+            price: service.price ?? null,
+
+            currency: service.currency ?? "",
+
+            journeyId:
+              journeyId !== null && journeyId !== undefined
+                ? String(journeyId).trim()
+                : "",
+
+            wixProductId:
+              service.wixProductId ??
+              service.wix_product_id ??
+              service.productId ??
+              service.product_id ??
+              "",
+
+            active:
+              service.active !== false &&
+              service.is_active !== false
+          };
+        })
+        .filter(
+          (service) =>
+            service.id != null &&
+            service.active
+        );
 
       setServices(list);
 
-      if (list.length > 0) {
-        const firstJourneyId = String(list[0].journeyId);
+      console.log(
+        `[ADMIN SERVICES] Loaded ${list.length} active Wix CMS service(s).`
+      );
+
+      // Only load a journey if a CMS service is mapped to one.
+      const firstMappedService = list.find(
+        (service) =>
+          String(service.journeyId || "").trim() !== ""
+      );
+
+      if (firstMappedService) {
+        const firstJourneyId = String(
+          firstMappedService.journeyId
+        );
+
         setViewJourneyId(firstJourneyId);
+
         await loadJourney(firstJourneyId);
+      } else {
+        setViewJourneyId("");
+        setJourney([]);
+        setJourneyStats({});
       }
 
       await loadServiceStats(list);
     } catch (err) {
-      setError(err?.response?.data?.detail || err?.message || "Unable to load services.");
+      console.error(
+        "[ADMIN SERVICES] Failed to load Wix CMS services:",
+        err
+      );
+
+      setError(
+        err?.response?.data?.detail ||
+        err?.message ||
+        "Unable to load services from Wix CMS."
+      );
     }
   };
 
@@ -257,19 +350,89 @@ export default function AdminJourneyPage() {
     try {
       const entries = await Promise.all(
         (list || []).map(async (service) => {
-          const data = await listAdminJourney(service.journeyId);
-          const servicePhases = Array.isArray(data?.journey) ? data.journey : [];
-          const stageCount = servicePhases.reduce((sum, phase) => sum + (phase.stages || []).length, 0);
-          const activeStageCount = servicePhases.reduce(
-            (sum, phase) => sum + (phase.stages || []).filter((stage) => stage.is_active).length,
-            0
-          );
-          return [service.id, { phaseCount: servicePhases.length, stageCount, activeStageCount, journeyId: service.journeyId }];
+          const normalizedJourneyId = String(
+            service?.journeyId || ""
+          ).trim();
+
+          // New CMS service may not have a SkillzAge journey yet.
+          // Keep the service visible and simply show zero counts.
+          if (!normalizedJourneyId) {
+            return [
+              service.id,
+              {
+                phaseCount: 0,
+                stageCount: 0,
+                activeStageCount: 0,
+                journeyId: ""
+              }
+            ];
+          }
+
+          try {
+            const data = await listAdminJourney(
+              normalizedJourneyId
+            );
+
+            const servicePhases = Array.isArray(data?.journey)
+              ? data.journey
+              : [];
+
+            const stageCount = servicePhases.reduce(
+              (sum, phase) =>
+                sum +
+                (Array.isArray(phase.stages)
+                  ? phase.stages.length
+                  : 0),
+              0
+            );
+
+            const activeStageCount = servicePhases.reduce(
+              (sum, phase) =>
+                sum +
+                (Array.isArray(phase.stages)
+                  ? phase.stages.filter(
+                      (stage) => stage.is_active
+                    ).length
+                  : 0),
+              0
+            );
+
+            return [
+              service.id,
+              {
+                phaseCount: servicePhases.length,
+                stageCount,
+                activeStageCount,
+                journeyId: normalizedJourneyId
+              }
+            ];
+          } catch (journeyError) {
+            console.warn(
+              `[ADMIN SERVICES] Could not load journey stats for service ${service.id}:`,
+              journeyError
+            );
+
+            return [
+              service.id,
+              {
+                phaseCount: 0,
+                stageCount: 0,
+                activeStageCount: 0,
+                journeyId: normalizedJourneyId
+              }
+            ];
+          }
         })
       );
+
       setJourneyStats(Object.fromEntries(entries));
-    } catch {
-      // Non-fatal — the dashboard just shows "-" for counts it couldn't fetch.
+    } catch (error) {
+      console.warn(
+        "[ADMIN SERVICES] Failed to build service stats:",
+        error
+      );
+
+      // Non-fatal — CMS services can still be displayed.
     }
   };
 
