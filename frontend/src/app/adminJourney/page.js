@@ -16,7 +16,7 @@ import {
   deleteAdminStageDocument,
   listAdminGlobalSources,
   listAdminJourney,
-  listAdminServices,
+  listAdminJourneys,
   listAdminStageDocuments,
   listAdminStartupMentors,
   updateAdminGlobalSource,
@@ -221,15 +221,18 @@ export default function AdminJourneyPage() {
 
   const loadServices = async () => {
     try {
-      const data = await listAdminServices();
-      const list = Array.isArray(data?.services)
-        ? data.services
-            .map((service) => ({
-              id: service.serviceId || service._id || service.id,
-              serviceName: service.serviceName || service.name || "Service",
-              serviceCode: service.serviceCode || "",
-              journeyId: service.journeyId || service.journey_id || "",
-              active: service.active !== false
+      const data = await listAdminJourneys();
+      const list = Array.isArray(data?.journeys)
+        ? data.journeys
+            .map((journeyRecord) => ({
+              id: journeyRecord.id,
+              serviceName: journeyRecord.journey_name || "Service",
+              serviceCode: journeyRecord.journey_key || "",
+              serviceDescription: journeyRecord.journey_description || "",
+              description: journeyRecord.journey_description || "",
+              journeyId: journeyRecord.id,
+              wixProductId: journeyRecord.wix_product_id || "",
+              active: journeyRecord.is_active !== false
             }))
             .filter((service) => service.active && service.journeyId)
         : [];
