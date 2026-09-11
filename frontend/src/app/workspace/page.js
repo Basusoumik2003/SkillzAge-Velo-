@@ -145,6 +145,44 @@ function WorkspaceContent() {
       ) {
         const user = data.user;
 
+        const authUserServiceName = String(
+          data.serviceName ||
+            data.service_name ||
+            user?.serviceName ||
+            user?.service_name ||
+            ""
+        ).trim();
+
+        if (authUserServiceName) {
+          try {
+            localStorage.setItem(
+              "internlabs_service_name",
+              authUserServiceName
+            );
+          } catch (error) {
+            console.warn(
+              "[WORKSPACE SERVICE] Could not persist service name:",
+              error
+            );
+          }
+
+          window.dispatchEvent(
+            new CustomEvent(
+              "WORKSPACE_SERVICE_UPDATED",
+              {
+                detail: {
+                  serviceName: authUserServiceName
+                }
+              }
+            )
+          );
+
+          console.log(
+            "[WORKSPACE SERVICE] ✅ Service name received:",
+            authUserServiceName
+          );
+        }
+
         console.log(
           "[WORKSPACE PROFILE] AUTH_USER received:",
           user
@@ -611,6 +649,42 @@ function WorkspaceContent() {
         console.log(
           "[WORKSPACE AUTH] Combined authentication data received"
         );
+
+        const authDataServiceName = String(
+          data.serviceName ||
+            data.service_name ||
+            ""
+        ).trim();
+
+        if (authDataServiceName) {
+          try {
+            localStorage.setItem(
+              "internlabs_service_name",
+              authDataServiceName
+            );
+          } catch (error) {
+            console.warn(
+              "[WORKSPACE SERVICE] Could not persist service name:",
+              error
+            );
+          }
+
+          window.dispatchEvent(
+            new CustomEvent(
+              "WORKSPACE_SERVICE_UPDATED",
+              {
+                detail: {
+                  serviceName: authDataServiceName
+                }
+              }
+            )
+          );
+
+          console.log(
+            "[WORKSPACE SERVICE] ✅ Service name received:",
+            authDataServiceName
+          );
+        }
 
         // -----------------------------------------------
         // Token

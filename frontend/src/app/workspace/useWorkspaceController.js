@@ -691,6 +691,161 @@ function resolveClientJourneyId({ searchParams, eventDetail } = {}) {
   return fromEvent || fromUrl || fromReferrer || fromStorage || "";
 }
 
+// ======================================================
+// SERVICE NAME RESOLUTION
+// ======================================================
+
+const SERVICE_NAME_STORAGE_KEY =
+  "internlabs_service_name";
+
+function sanitizeServiceName(value) {
+  return String(value ?? "").trim();
+}
+
+function readServiceNameFromQueryString(search) {
+  const raw = String(search || "").trim();
+
+  if (!raw) return "";
+
+  try {
+    const params = new URLSearchParams(
+      raw.startsWith("?")
+        ? raw.slice(1)
+        : raw
+    );
+
+    return sanitizeServiceName(
+      params.get("service_name") ||
+      params.get("serviceName") ||
+      ""
+    );
+
+  } catch {
+    return "";
+  }
+}
+
+function readServiceNameFromReferrer() {
+
+  if (
+    typeof document === "undefined"
+  ) {
+    return "";
+  }
+
+  try {
+
+    const referrer =
+      document.referrer || "";
+
+    if (!referrer) {
+      return "";
+    }
+
+    const url =
+      new URL(referrer);
+
+    return readServiceNameFromQueryString(
+      url.search
+    );
+
+  } catch {
+    return "";
+  }
+}
+
+function readStoredServiceName() {
+
+  if (
+    typeof window === "undefined"
+  ) {
+    return "";
+  }
+
+  try {
+
+    return sanitizeServiceName(
+      window.localStorage.getItem(
+        SERVICE_NAME_STORAGE_KEY
+      ) || ""
+    );
+
+  } catch {
+    return "";
+  }
+}
+
+function persistServiceName(value) {
+
+  const clean =
+    sanitizeServiceName(value);
+
+  if (
+    !clean ||
+    typeof window === "undefined"
+  ) {
+    return clean;
+  }
+
+  try {
+
+    window.localStorage.setItem(
+      SERVICE_NAME_STORAGE_KEY,
+      clean
+    );
+
+  } catch {
+    // Ignore storage errors.
+  }
+
+  return clean;
+}
+
+function resolveClientServiceName({
+  searchParams,
+  eventDetail
+} = {}) {
+
+  const fromEvent =
+    sanitizeServiceName(
+      eventDetail?.serviceName ||
+      eventDetail?.service_name ||
+      ""
+    );
+
+  const fromUrl =
+    sanitizeServiceName(
+      searchParams?.get?.(
+        "service_name"
+      ) ||
+      searchParams?.get?.(
+        "serviceName"
+      ) ||
+      ""
+    ) ||
+    (
+      typeof window !== "undefined"
+        ? readServiceNameFromQueryString(
+            window.location.search
+          )
+        : ""
+    );
+
+  const fromReferrer =
+    readServiceNameFromReferrer();
+
+  const fromStorage =
+    readStoredServiceName();
+
+  return (
+    fromEvent ||
+    fromUrl ||
+    fromReferrer ||
+    fromStorage ||
+    ""
+  );
+}
+
 function createClientMessageId() {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -749,6 +904,7 @@ export default function useWorkspaceController() {
   const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceClosed, setWorkspaceClosed] = useState({ closed: false, message: "" });
   const [projectName, setProjectName] = useState("");
+  const [serviceName, setServiceName] = useState("");
   // The active journey id is the single source of truth for which journey the
   // workspace loads. Seed it synchronously from every client-side source so the
   // very first render already knows which journey was picked on the Products
@@ -906,6 +1062,88 @@ export default function useWorkspaceController() {
         syncJourneyId
       );
     };
+  }, [searchParams]);
+
+  useEffect(() => {
+
+    if (
+      typeof window === "undefined"
+    ) {
+      return undefined;
+    }
+
+    const syncServiceName = (
+      event
+    ) => {
+
+      const nextServiceName =
+        resolveClientServiceName({
+          searchParams,
+          eventDetail:
+            event?.detail
+        });
+
+      if (!nextServiceName) {
+
+        return;
+      }
+
+      persistServiceName(
+        nextServiceName
+      );
+
+      setServiceName(
+        (prev) =>
+          prev === nextServiceName
+            ? prev
+            : nextServiceName
+      );
+
+      console.log(
+        "[WORKSPACE SERVICE] ✅ Active service:",
+        nextServiceName
+      );
+    };
+
+    // Initial resolution
+    syncServiceName();
+
+    // Listen for Wix updates
+    window.addEventListener(
+      "WORKSPACE_SERVICE_UPDATED",
+      syncServiceName
+    );
+
+    // Ask parent to resend auth/service data
+    if (
+      window.parent &&
+      window.parent !== window
+    ) {
+
+      try {
+
+        window.parent.postMessage(
+          {
+            type:
+              "WORKSPACE_REQUEST_SERVICE_NAME"
+          },
+          "*"
+        );
+
+      } catch {
+        // Ignore cross-origin errors.
+      }
+    }
+
+    return () => {
+
+      window.removeEventListener(
+        "WORKSPACE_SERVICE_UPDATED",
+        syncServiceName
+      );
+
+    };
+
   }, [searchParams]);
 
   useEffect(() => {
@@ -3477,7 +3715,7 @@ export default function useWorkspaceController() {
     }
     setSelectedStageByStep((prev) => ({ ...prev, [selectedPoint]: activeStageIndex + 1 }));
   };
-  const navbarProjectTitle = String(catalogProject?.title || projectName || "").trim() || "Workspace";
+  const navbarProjectTitle = String(serviceName || catalogProject?.title || projectName || "").trim() || "Workspace";
   const isDemoProject = Boolean(catalogProject?.is_demo_project);
   const navbarStageTitle =
     String(activeStageData?.title || currentMethodStep?.title || workspacePoints[workspaceCurrentStep - 1]?.title || "").trim() || "No data available";
@@ -3676,6 +3914,7 @@ export default function useWorkspaceController() {
     goBackInTaskFlow,
     goToNextTaskStep,
     navbarProjectTitle,
+    serviceName,
     isDemoProject,
     navbarStageTitle,
     navbarTotalSteps,
