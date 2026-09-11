@@ -3427,13 +3427,9 @@ export default function useWorkspaceController() {
         agent,
         kind: "stage-note",
         content: isDemoProject
-          ? `${timeGreeting()}, ${studentName}! Welcome to the ${projectTitle} trial project. This is a practice trial, not a paid internship project, so use it to understand the workflow before unlocking internship projects. Take your time reading through the context; it will make everything that follows much smoother!`
-          : `${timeGreeting()}, ${studentName}! Welcome to the ${projectTitle} project. We are running this exactly like a real industry engagement - so before jumping into execution, let us make sure you have the full business picture. Take your time reading through the context; it will make everything that follows much smoother!`
+          ? `${timeGreeting()}, ${studentName}! Welcome to the ${projectTitle} trial project. This is a practice trial, not a paid internship project, so use it to understand the workflow before unlocking internship projects. Take your time reviewing the stage information; it will make everything that follows much smoother!`
+          : `${timeGreeting()}, ${studentName}! Welcome to the ${projectTitle} project. We are running this exactly like a real industry engagement - so before jumping into execution, let us make sure you have the full business picture. Take your time reviewing the stage information; it will make everything that follows much smoother!`
       });
-    }
-    const context = String(activeStageData.stage_context || "").trim();
-    if (context) {
-      items.push({ role: "assistant", agent, kind: "stage-detail", label: "Context", content: context });
     }
     const objective = String(activeStageData.objective || "").trim();
     if (objective) {
@@ -3488,7 +3484,7 @@ export default function useWorkspaceController() {
           role: "assistant",
           agent,
           kind: "stage-action",
-          content: "Take a moment to review the stage details above - the objective, context, and what you need to deliver. Once you feel confident about what is expected, let me know and we will move to the next step!",
+          content: "Take a moment to review the stage details above - the objective and what you need to deliver. Once you feel confident about what is expected, let me know and we will move to the next step!",
           actions: [
             { id: "understand_yes", label: "Got it, let's move on!", variant: "primary" },
             { id: "understand_no", label: "I need more time" }

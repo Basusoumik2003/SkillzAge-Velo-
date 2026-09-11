@@ -162,9 +162,6 @@ export default function StartupJourneyWorkspacePage() {
                     {selectedPhase?.phase_name}
                   </p>
                   <h1 className="mt-1 text-2xl font-black text-slate-950">{selectedStage.stage_name}</h1>
-                  {selectedStage.stage_context ? (
-                    <p className="mt-2 max-w-2xl text-sm font-medium text-slate-600">{selectedStage.stage_context}</p>
-                  ) : null}
                   {selectedStage.stage_objective ? (
                     <p className="mt-2 text-sm text-slate-500">
                       <span className="font-black text-slate-700">Objective: </span>

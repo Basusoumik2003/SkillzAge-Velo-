@@ -1258,6 +1258,17 @@ def _is_startup_project(project_name: str) -> bool:
     return normalized.startswith("startup")
 
 
+def _stored_chat_mentor_id(project_name: str, mentor_id: int | None) -> int | None:
+    """The chat table's mentor_id FK belongs to the legacy project_mentors table.
+
+    Startup mentors live in startup_mentors, so their IDs must not be written
+    into that legacy FK column. Startup mentor identity remains in agent_key,
+    agent_name, and message metadata, which are the fields used by startup
+    routing and display.
+    """
+    return None if _is_startup_project(project_name) else mentor_id
+
+
 def _fetch_startup_mentor_row(db: Session, query: str, params: dict) -> dict | None:
     row = db.execute(text(query), params).mappings().first()
     return dict(row or {}) if row and row.get("id") else None
@@ -1795,7 +1806,7 @@ def save_local_chat_message(payload: LocalChatMessageInput, db: Session = Depend
             message=message,
             agent_key=str(payload.agent_key or "").strip(),
             agent_name=str(payload.agent_name or ("You" if role == "user" else "Mentor")).strip(),
-            mentor_id=payload.mentor_id,
+            mentor_id=_stored_chat_mentor_id(project_name, payload.mentor_id),
             metadata=metadata,
         )
         append_cached_messages(user.id, progress.project_name, [_serialize_chat_message(row)])
@@ -1860,7 +1871,7 @@ def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = 
             message=payload.message,
             agent_key=admin_mentor.get("backend_key") or payload.preferred_agent or "",
             agent_name="You",
-            mentor_id=admin_mentor.get("id"),
+            mentor_id=_stored_chat_mentor_id(progress.project_name, admin_mentor.get("id")),
             metadata=chat_metadata,
         )
 
@@ -1925,7 +1936,7 @@ def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = 
             message=busy_message,
             agent_key=selected_agent,
             agent_name=admin_mentor.get("name") or AGENT_LABELS.get(selected_agent, "Mentor"),
-            mentor_id=admin_mentor.get("id"),
+            mentor_id=_stored_chat_mentor_id(progress.project_name, admin_mentor.get("id")),
             metadata=rate_metadata,
         )
         append_cached_messages(
@@ -1986,7 +1997,7 @@ def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = 
             message=assistant_message,
             agent_key=selected_agent,
             agent_name=admin_mentor.get("name") or AGENT_LABELS.get(selected_agent, "Mentor"),
-            mentor_id=admin_mentor.get("id"),
+            mentor_id=_stored_chat_mentor_id(progress.project_name, admin_mentor.get("id")),
             metadata=chat_metadata,
         )
         append_cached_messages(
@@ -2028,7 +2039,7 @@ def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = 
             message=assistant_message,
             agent_key=selected_agent,
             agent_name=low_intent_agent_name,
-            mentor_id=admin_mentor.get("id"),
+            mentor_id=_stored_chat_mentor_id(progress.project_name, admin_mentor.get("id")),
             metadata=chat_metadata,
         )
         append_cached_messages(
@@ -2313,7 +2324,7 @@ def mentor_chat(payload: ChatInput, db: Session = Depends(get_db), user: User = 
         message=mentor_reply["message"],
         agent_key=admin_mentor.get("backend_key") or payload.preferred_agent or "",
         agent_name=mentor_reply["agent"],
-        mentor_id=admin_mentor.get("id"),
+        mentor_id=_stored_chat_mentor_id(progress.project_name, admin_mentor.get("id")),
         metadata=chat_metadata,
     )
     append_cached_messages(
@@ -3152,7 +3163,7 @@ def review_stage_document(payload: StageDocumentReviewInput, db: Session = Depen
         message=chat_message,
         agent_key=agent_key,
         agent_name=agent_name,
-        mentor_id=admin_mentor.get("id"),
+        mentor_id=_stored_chat_mentor_id(progress.project_name, admin_mentor.get("id")),
         metadata={
             "stage_key": str(payload.stage_key or "").strip(),
             "step_number": payload.step_number,

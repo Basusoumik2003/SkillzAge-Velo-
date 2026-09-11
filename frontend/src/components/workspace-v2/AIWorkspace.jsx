@@ -31,7 +31,6 @@ export default function AIWorkspace(controller) {
     workspacePoints,
     selectedPointData,
     hasProjectMethodology,
-    currentInstruction,
     selectedPointProgress,
     activePhaseDuration,
     activePhaseTimelineLabel,
@@ -145,9 +144,6 @@ export default function AIWorkspace(controller) {
                         <Badge variant="secondary">{`${selectedPointProgress}% of this step`}</Badge>
                       ) : null}
                     </div>
-                    <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-secondary">
-                      {hasProjectMethodology ? selectedPointData?.context || currentInstruction : "No data available."}
-                    </p>
                     {hasProjectMethodology ? (
                       <div className="mt-4 flex flex-wrap items-center gap-2">
                         <Badge variant="outline">{labelForAgent(activeStageAgentKey)}</Badge>
