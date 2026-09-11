@@ -18,7 +18,6 @@ const searchProxy = createProxyHandler({
   targetBaseUrl: config.services.search,
   rewritePath: (originalUrl) => originalUrl.replace(/^\/api(?=\/|$)/, "")
 });
-const userProxy = createProxyHandler({ targetBaseUrl: config.services.user });
 const contactProxy = createProxyHandler({ targetBaseUrl: config.services.contact });
 const paymentProxy = createProxyHandler({ targetBaseUrl: config.services.payment });
 const invoiceProxy = createProxyHandler({ targetBaseUrl: config.services.invoice });
@@ -41,7 +40,9 @@ router.use("/startup", adminProxy);
 router.use("/payment", paymentProxy);
 
 router.use("/dashboard/payments", paymentProxy);
-router.use("/dashboard", userProxy);
+// Dashboard endpoints are implemented by adminService (dashboardRoutes.js),
+// not by the search/user service running on port 8008.
+router.use("/dashboard", adminProxy);
 router.use("/create-order", paymentProxy);
 router.use("/verify-payment", paymentProxy);
 
