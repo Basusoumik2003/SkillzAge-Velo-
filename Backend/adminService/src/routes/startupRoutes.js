@@ -599,7 +599,7 @@ async function fetchRetrievedContext({ userId, profileId, ideaId, phaseId, stage
 // ==========================================================
 
 router.get(
-  "/startup/services",
+  "/admin/startup/services",
   requireAuth,
   requireAdminMiddleware,
   async (req, res, next) => {
