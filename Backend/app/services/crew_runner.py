@@ -14,6 +14,7 @@ already be in `context` by the time orchestrator.route_agent() calls it.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from app.agents.agent_factory import _build_llm
@@ -153,6 +154,12 @@ def _mentor_system_prompt(mentor: dict[str, Any]) -> str:
 def run_crew(*, context: dict[str, Any], target_agent: str) -> dict[str, str]:
     mentor = _mentor_persona(context, target_agent)
     message = ""
+    started_at = time.perf_counter()
+    logger.info(
+        "mentor_llm:start target_agent=%s mentor=%s model_source=crewai_llm",
+        target_agent or "default",
+        str(mentor.get("name") or mentor.get("mentor_name") or "Mentor"),
+    )
     try:
         # Deliberately bypass crewai's Agent/Task/Crew executor here: that
         # executor drives a ReAct (Thought/Action/Action Input) tool-use loop,
@@ -168,8 +175,25 @@ def run_crew(*, context: dict[str, Any], target_agent: str) -> dict[str, str]:
         ]
         raw = llm.call(messages)
         message = str(raw or "").strip()
-    except Exception:
-        logger.exception("crew_runner.run_crew failed for target_agent=%s.", target_agent)
+        logger.info(
+            "mentor_llm:success target_agent=%s response_chars=%s duration_ms=%s",
+            target_agent or "default",
+            len(message),
+            round((time.perf_counter() - started_at) * 1000),
+        )
+    except Exception as error:
+        logger.exception(
+            "mentor_llm:failure target_agent=%s error_type=%s duration_ms=%s",
+            target_agent or "default",
+            type(error).__name__,
+            round((time.perf_counter() - started_at) * 1000),
+        )
+
+    if not message:
+        logger.warning(
+            "mentor_llm:fallback target_agent=%s reason=empty_or_failed_response",
+            target_agent or "default",
+        )
 
     return {
         "agent": str(mentor.get("name") or mentor.get("mentor_name") or "Mentor").strip(),

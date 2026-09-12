@@ -530,14 +530,18 @@ export default function AdminJourneyPage() {
         mentor_id: stageForm.mentor_id ? Number(stageForm.mentor_id) : null
       };
 
-      const { stage: savedStage } = stageForm.id
+      const wasEditing = Boolean(stageForm.id);
+      const { stage: savedStage } = wasEditing
         ? await updateAdminJourneyStage(stageForm.id, payload)
         : await createAdminJourneyStage(payload);
 
-      // Keep the (now-saved) stage loaded instead of resetting to a blank
-      // form - a brand-new stage has no id until this point, and the
-      // Deliverables editor below needs a real stage_id to do anything.
-      loadStageIntoForm(savedStage);
+      // Keep updates in edit mode, but reset after creating a new stage so
+      // the form immediately returns to Create Stage without a page refresh.
+      if (wasEditing) {
+        loadStageIntoForm(savedStage);
+      } else {
+        resetStage();
+      }
       await loadJourney(viewJourneyId);
       loadServiceStats(services);
     } catch (err) {

@@ -30,7 +30,7 @@ def _build_llm():
         raise RuntimeError("OPENAI_API_KEY is required for mentor agents.")
     return LLM(
         model=f"openai/{model}",
-        temperature=0.3,
+        temperature=1,
         api_key=settings.openai_api_key,
     )
 
