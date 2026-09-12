@@ -69,7 +69,7 @@ function ensureCoinSchema() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE TABLE IF NOT EXISTS user_coin_balances (
-        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         coin_balance INTEGER NOT NULL DEFAULT 0,
         total_coins_purchased INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -161,7 +161,7 @@ function ensureCertificateRequestSchema() {
     certificateRequestSchemaReady = pool.query(`
       CREATE TABLE IF NOT EXISTS certificate_requests (
         id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         project_name VARCHAR(160) NOT NULL,
         experience_text TEXT NOT NULL DEFAULT '',
         overall_rating INTEGER NOT NULL DEFAULT 5,
@@ -413,7 +413,7 @@ function ensureRecommendationLogSchema() {
     recommendationLogSchemaReady = pool.query(`
       CREATE TABLE IF NOT EXISTS project_recommendation_logs (
         id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
         project_title VARCHAR(160) NOT NULL DEFAULT '',
         rank INTEGER NOT NULL DEFAULT 1,
@@ -669,7 +669,7 @@ function ensureStageProgressTable() {
         ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
       CREATE TABLE IF NOT EXISTS project_stage_progress (
         id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         project_name TEXT NOT NULL,
         step_number INTEGER NOT NULL,
         stage_index INTEGER NOT NULL,
@@ -699,7 +699,7 @@ function ensureStageProgressTable() {
         ON project_stage_progress(document_review_status);
       CREATE TABLE IF NOT EXISTS project_stage_documents (
         id SERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         project_name TEXT NOT NULL,
         step_number INTEGER NOT NULL,
         stage_index INTEGER NOT NULL,

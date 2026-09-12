@@ -1985,6 +1985,11 @@ export default function useWorkspaceController() {
   const loadBackendProgress = async (targetProjectName = projectName, progressData = null) => {
     if (workspaceMode === "demo") return null;
     if (!targetProjectName) return null;
+    // Startup journeys are tracked by student_stage_progress, not the legacy
+    // project_progress/project_stage_progress tables.
+    if (catalogProject?.journey_id || startupJourneyId || /^startup journey:/i.test(String(targetProjectName))) {
+      return null;
+    }
     try {
       const data = progressData || await getDashboardProgress();
       const list = Array.isArray(data?.projects) ? data.projects : [];
@@ -2042,6 +2047,13 @@ export default function useWorkspaceController() {
       return;
     }
     if (!targetProjectName) return;
+    // Do not hydrate a startup journey from the legacy dashboard progress API.
+    // Its source of truth is the startup workspace response, backed by
+    // student_stage_progress.
+    if (catalogProject?.journey_id || startupJourneyId || /^startup journey:/i.test(String(targetProjectName))) {
+      setStageProgressLoaded(true);
+      return;
+    }
     setStageProgressLoaded(false);
     try {
       const data = await getDashboardStageProgress({ project_name: targetProjectName });
@@ -2903,7 +2915,7 @@ export default function useWorkspaceController() {
       });
     }
     // The Trial Workspace runs entirely client-side - no backend to save to.
-    if (workspaceMode === "demo") return true;
+    if (workspaceMode === "demo" || catalogProject?.journey_id || startupJourneyId) return true;
     try {
       await updateDashboardStageProgress({
         project_name: projectName,
@@ -2936,7 +2948,7 @@ export default function useWorkspaceController() {
       return next;
     });
     setStagePromptPhaseByKey((prev) => ({ ...prev, [key]: "none" }));
-    if (workspaceMode !== "demo") {
+    if (workspaceMode !== "demo" && !catalogProject?.journey_id && !startupJourneyId) {
       try {
         await updateDashboardStageProgress({
           project_name: projectName,
