@@ -159,6 +159,7 @@ async function indexStageDocument(stageDocumentId, text) {
     return;
   }
   await indexChunks({ table: "stage_document_chunks", idColumn: "stage_document_id", recordId: stageDocumentId, text });
+  await pool.query("UPDATE stage_documents SET indexed_at = NOW() WHERE id = $1", [stageDocumentId]);
 }
 
 async function indexKnowledgeSource(sourceId, text) {
@@ -167,6 +168,7 @@ async function indexKnowledgeSource(sourceId, text) {
     return;
   }
   await indexChunks({ table: "knowledge_chunks", idColumn: "source_id", recordId: sourceId, text });
+  await pool.query("UPDATE knowledge_sources SET indexed_at = NOW() WHERE id = $1", [sourceId]);
 }
 
 async function retrieveTopChunks({ table, idColumn, joinIds, questionEmbedding, limit }) {
