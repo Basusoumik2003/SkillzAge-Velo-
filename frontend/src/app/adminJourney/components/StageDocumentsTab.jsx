@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { FileText, Link2, Loader2, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { CheckCircle2, Clock3, FileText, Link2, Loader2, Pencil, Plus, Trash2, Upload } from "lucide-react";
 
 import { EmptyState, FieldLabel, Panel, inputClass } from "./ui";
 
@@ -220,9 +220,23 @@ export default function StageDocumentsTab({
                           Inactive
                         </span>
                       ) : null}
+                      {doc.indexed_at ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-emerald-700">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Indexed
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700">
+                          <Clock3 className="h-3 w-3" />
+                          Pending indexing
+                        </span>
+                      )}
                     </div>
                     <p className="mt-1 text-xs font-semibold text-slate-500">
                       {doc.phase_name} &middot; {doc.stage_name}
+                    </p>
+                    <p className="mt-1 text-[11px] font-semibold text-slate-400">
+                      {doc.indexed_at ? `Indexed ${new Date(doc.indexed_at).toLocaleString()}` : "Document text has not been indexed yet."}
                     </p>
                     {doc.source_type === "upload" && doc.storage_url ? (
                       <a

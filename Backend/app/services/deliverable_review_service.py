@@ -130,7 +130,10 @@ def create_ai_review(db: Session, submission_id: int) -> DeliverableReview:
         reviewed_at=datetime.now(timezone.utc),
     )
 
-    new_submission_status = "under_review" if outcome["status"] == "approved" else "resubmission_required"
+    # Keep the submission status aligned with the AI review outcome. An
+    # approved review must remain approved so _maybe_complete_stage() can
+    # detect that every required deliverable has passed its threshold.
+    new_submission_status = outcome["status"]
     repo.update_submission_status(db, submission, new_submission_status)
     if outcome["status"] == "approved":
         _maybe_complete_stage(db, submission)

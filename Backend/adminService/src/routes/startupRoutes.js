@@ -2085,8 +2085,9 @@ router.get("/admin/startup/stage-documents", requireAuth, async (req, res, next)
     const phaseId = normalizeInteger(req.query?.phase_id, null);
     const { rows } = await pool.query(
       `SELECT sd.id, sd.phase_id, sd.stage_id, sd.title, sd.document_type, sd.source_type, sd.source_url,
-              sd.storage_url, sd.original_filename, sd.content_text, sd.tags, sd.language, sd.is_active,
-              sd.created_by, sd.created_at, sd.updated_at,
+               sd.storage_url, sd.original_filename, sd.content_text, sd.tags, sd.language, sd.is_active,
+               sd.indexed_at,
+               sd.created_by, sd.created_at, sd.updated_at,
               js.stage_name, jp.phase_name
        FROM stage_documents sd
        LEFT JOIN journey_stages js ON js.id = sd.stage_id
