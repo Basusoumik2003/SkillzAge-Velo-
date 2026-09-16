@@ -3,7 +3,7 @@ const profileModel = require('../models/profileModel');
 
 async function getProfile(req, res, next) {
   try {
-    const userId = req.user.id;
+    const userId = req.auth.userId;
     const user = await userModel.findById(userId);
 
     if (!user) {
@@ -29,7 +29,7 @@ async function getProfile(req, res, next) {
 
 async function updateProfile(req, res, next) {
   try {
-    const userId = req.user.id;
+    const userId = req.auth.userId;
     const profile = await profileModel.upsertProfile(userId, req.body || {});
 
     return res.status(200).json({
@@ -46,7 +46,7 @@ async function updateProfile(req, res, next) {
 
 async function deleteProfile(req, res, next) {
   try {
-    const userId = req.user.id;
+    const userId = req.auth.userId;
     const profile = await profileModel.deleteProfile(userId);
 
     return res.status(200).json({

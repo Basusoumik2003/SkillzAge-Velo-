@@ -3,6 +3,7 @@ const db = require('../config/db');
 const PROFILE_FIELDS = `
   id,
   user_id,
+  journey_id,
   age,
   education_level,
   country,
@@ -86,6 +87,7 @@ function normalizeTextArray(value) {
 
 function normalizeProfileInput(profile = {}) {
   return {
+    journeyId: normalizeInteger(profile.journeyId ?? profile.journey_id, null),
     age: normalizeInteger(profile.age, null),
     educationLevel: normalizeText(profile.educationLevel ?? profile.education_level, 100),
     country: normalizeText(profile.country, 100),
@@ -128,6 +130,7 @@ async function upsertProfile(userId, profile) {
   const { rows } = await db.query(
     `INSERT INTO user_profiles (
       user_id,
+      journey_id,
       age,
       education_level,
       country,
@@ -147,12 +150,13 @@ async function upsertProfile(userId, profile) {
       updated_at
     )
     VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8,
-      $9, $10, $11, $12, $13, $14, $15, $16,
-      $17, NOW()
+      $1, $2, $3, $4, $5, $6, $7, $8, $9,
+      $10, $11, $12, $13, $14, $15, $16, $17,
+      $18, $19, NOW()
     )
     ON CONFLICT (user_id)
     DO UPDATE SET
+      journey_id = COALESCE(EXCLUDED.journey_id, user_profiles.journey_id),
       age = EXCLUDED.age,
       education_level = EXCLUDED.education_level,
       country = EXCLUDED.country,
@@ -173,6 +177,7 @@ async function upsertProfile(userId, profile) {
     RETURNING ${PROFILE_FIELDS}`,
     [
       userId,
+      normalized.journeyId,
       normalized.age,
       normalized.educationLevel,
       normalized.country,
