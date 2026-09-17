@@ -34,7 +34,7 @@ export const config = {
   otpMaxAttempts: asNumber(process.env.OTP_MAX_ATTEMPTS, 5),
   corsOrigins: asOriginList(
     process.env.CORS_ORIGINS || process.env.CORS_ORIGIN,
-    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,https://skillzage.com,https://www.skillzage.com,https://internzbee.in,https://www.internzbee.in"
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,https://skillzage.com,https://www.skillzage.com,https://workspace.skillzage.com,https://internzbee.in,https://www.internzbee.in"
   ),
   services: {
     auth: process.env.AUTH_SERVICE_URL || "http://127.0.0.1:8002",
