@@ -1,7 +1,5 @@
 import express from "express";
-import cors from "cors";
 import helmet from "helmet";
-import { config } from "./config/config.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import adminAuthRoutes from "./routes/adminAuthRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
@@ -13,22 +11,6 @@ const logger = createLogger("adminService");
 
 app.use(helmet());
 app.use(requestLogger("adminService"));
-
-const allowedOrigins = String(config.corsOrigin || "")
-  .split(",")
-  .map((x) => x.trim())
-  .filter(Boolean);
-
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin) return callback(null, true);
-      if (!allowedOrigins.length) return callback(null, true);
-      return callback(null, allowedOrigins.includes(origin));
-    },
-    credentials: true
-  })
-);
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
