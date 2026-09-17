@@ -1122,6 +1122,10 @@ router.get("/startup/profile", requireAuth, async (req, res, next) => {
 router.post("/startup/profile", requireAuth, async (req, res, next) => {
   try {
     const userId = req.auth.userId;
+    const journeyId = normalizeInteger(
+      req.body?.journey_id || req.body?.journeyId,
+      null
+    );
     const toStringArray = (value) => {
       if (Array.isArray(value)) {
         return value.map((item) => String(item || "").trim()).filter(Boolean);
@@ -1208,6 +1212,63 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
     );
 
     const profile = profileRes.rows[0];
+
+    if (journeyId) {
+      await pool.query(
+        `
+        INSERT INTO user_project_details (
+          user_id,
+          journey_id,
+          details,
+          updated_at
+        )
+        VALUES ($1, $2, $3::jsonb, NOW())
+        ON CONFLICT (user_id, journey_id)
+        DO UPDATE SET
+          details = EXCLUDED.details,
+          updated_at = NOW()
+        `,
+        [
+          userId,
+          journeyId,
+          JSON.stringify({
+            age,
+            country,
+            state,
+            city,
+            currentIdea
+          })
+        ]
+      );
+
+      await pool.query(
+        `
+        INSERT INTO user_project_access (
+          user_id,
+          journey_id,
+          access_status,
+          project_status,
+          purchased_at,
+          updated_at
+        )
+        VALUES (
+          $1,
+          $2,
+          'active',
+          'in_progress',
+          NOW(),
+          NOW()
+        )
+        ON CONFLICT (user_id, journey_id)
+        DO UPDATE SET
+          access_status = 'active',
+          project_status = 'in_progress',
+          updated_at = NOW()
+        `,
+        [userId, journeyId]
+      );
+    }
+
     let idea = null;
 
     if (normalizeText(req.body?.idea_title || req.body?.ideaTitle, 180) || currentIdea) {
