@@ -8,19 +8,30 @@ ALTER TABLE login_codes
 
 CREATE INDEX IF NOT EXISTS ix_login_codes_email_purpose ON login_codes(email, purpose);
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE IF NOT EXISTS user_profiles (
-  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  user_id UUID NOT NULL UNIQUE,
-  profile_image_url TEXT DEFAULT '',
-  resume_url TEXT DEFAULT '',
-  college_name VARCHAR(150) DEFAULT '',
-  branch VARCHAR(100) DEFAULT '',
-  semester VARCHAR(50) DEFAULT '',
-  year VARCHAR(50) DEFAULT '',
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  age INTEGER,
+  education_level VARCHAR(100),
+  country VARCHAR(100),
+  state VARCHAR(100),
+  city VARCHAR(100),
+  skills TEXT[],
+  interests TEXT[],
+  available_hours_per_week NUMERIC(5, 2),
+  has_laptop BOOLEAN NOT NULL DEFAULT FALSE,
+  has_internet BOOLEAN NOT NULL DEFAULT FALSE,
+  has_team BOOLEAN NOT NULL DEFAULT FALSE,
+  has_funding BOOLEAN NOT NULL DEFAULT FALSE,
+  participation VARCHAR(20),
+  current_idea TEXT,
+  startup_stage VARCHAR(50),
+  goals TEXT[],
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT fk_user_profiles_user
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  journey_id INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS ix_user_profiles_user_id ON user_profiles(user_id);
