@@ -1214,59 +1214,91 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
     const profile = profileRes.rows[0];
 
     if (journeyId) {
-      await pool.query(
+      // Wix CMS journeyId remains authoritative for workspace opening.
+      // PostgreSQL journey data is only used for optional project records.
+      const journeyRes = await pool.query(
         `
-        INSERT INTO user_project_details (
-          user_id,
-          journey_id,
-          details,
-          updated_at
-        )
-        VALUES ($1, $2, $3::jsonb, NOW())
-        ON CONFLICT (user_id, journey_id)
-        DO UPDATE SET
-          details = EXCLUDED.details,
-          updated_at = NOW()
+        SELECT id
+        FROM journeys
+        WHERE id = $1
+        LIMIT 1
         `,
-        [
-          userId,
-          journeyId,
-          JSON.stringify({
-            age,
-            country,
-            state,
-            city,
-            currentIdea
-          })
-        ]
+        [journeyId]
       );
 
-      await pool.query(
-        `
-        INSERT INTO user_project_access (
-          user_id,
-          journey_id,
-          access_status,
-          project_status,
-          purchased_at,
-          updated_at
-        )
-        VALUES (
-          $1,
-          $2,
-          'active',
-          'in_progress',
-          NOW(),
-          NOW()
-        )
-        ON CONFLICT (user_id, journey_id)
-        DO UPDATE SET
-          access_status = 'active',
-          project_status = 'in_progress',
-          updated_at = NOW()
-        `,
-        [userId, journeyId]
-      );
+      if (journeyRes.rows.length > 0) {
+        console.log(
+          "[STARTUP PROFILE] Backend journey exists:",
+          journeyId
+        );
+
+        await pool.query(
+          `
+          INSERT INTO user_project_details (
+            user_id,
+            journey_id,
+            details,
+            updated_at
+          )
+          VALUES ($1, $2, $3::jsonb, NOW())
+          ON CONFLICT (user_id, journey_id)
+          DO UPDATE SET
+            details = EXCLUDED.details,
+            updated_at = NOW()
+          `,
+          [
+            userId,
+            journeyId,
+            JSON.stringify({
+              age,
+              country,
+              state,
+              city,
+              currentIdea
+            })
+          ]
+        );
+
+        await pool.query(
+          `
+          INSERT INTO user_project_access (
+            user_id,
+            journey_id,
+            access_status,
+            project_status,
+            purchased_at,
+            updated_at
+          )
+          VALUES (
+            $1,
+            $2,
+            'active',
+            'in_progress',
+            NOW(),
+            NOW()
+          )
+          ON CONFLICT (user_id, journey_id)
+          DO UPDATE SET
+            access_status = 'active',
+            project_status = 'in_progress',
+            updated_at = NOW()
+          `,
+          [userId, journeyId]
+        );
+
+        console.log(
+          "[STARTUP PROFILE] Project details/access saved for journey:",
+          journeyId
+        );
+      } else {
+        console.warn(
+          "[STARTUP PROFILE] Backend journey not found:",
+          journeyId
+        );
+        console.warn(
+          "[STARTUP PROFILE] Skipping project access/details records."
+        );
+      }
     }
 
     let idea = null;
