@@ -1380,20 +1380,72 @@ router.post("/startup/journey/select", requireAuth, async (req, res, next) => {
       return res.status(400).json({ detail: "journey_id is required." });
     }
 
-    const journeyRow = await pool.query(
-      "SELECT * FROM journeys WHERE id = $1 AND is_active = TRUE LIMIT 1",
+    const journeyKey = String(req.body?.journey_key || "").trim();
+    const journeyName = String(req.body?.journey_name || "").trim();
+    const journeyDescription = String(req.body?.journey_description || "").trim();
+    const journeyObjective = String(req.body?.journey_objective || "").trim();
+    const intendedAudience = String(req.body?.intended_audience || "").trim();
+
+    let journeyRow = await pool.query(
+      `SELECT *
+       FROM journeys
+       WHERE id = $1
+       LIMIT 1`,
       [journeyId]
     );
+
     if (!journeyRow.rows.length) {
-      return res.status(404).json({ detail: "Journey not found." });
+      if (
+        !journeyKey ||
+        !journeyName ||
+        !journeyDescription ||
+        !journeyObjective ||
+        !intendedAudience
+      ) {
+        return res.status(400).json({
+          detail: "Journey does not exist and complete journey details were not provided."
+        });
+      }
+
+      const insertResult = await pool.query(
+        `INSERT INTO journeys (
+           id,
+           journey_key,
+           journey_name,
+           journey_description,
+           journey_objective,
+           intended_audience,
+           is_active,
+           created_at,
+           updated_at,
+           is_default
+         )
+         OVERRIDING SYSTEM VALUE
+         VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW(), NOW(), FALSE)
+         RETURNING *`,
+        [
+          journeyId,
+          journeyKey,
+          journeyName,
+          journeyDescription,
+          journeyObjective,
+          intendedAudience
+        ]
+      );
+
+      journeyRow = insertResult;
     }
 
-    // Upsert - picking a journey is allowed before the profile form is filled.
     const result = await pool.query(
-      `INSERT INTO user_profiles (user_id, journey_id)
+      `INSERT INTO user_profiles (
+         user_id,
+         journey_id
+       )
        VALUES ($1, $2)
        ON CONFLICT (user_id)
-       DO UPDATE SET journey_id = $2, updated_at = NOW()
+       DO UPDATE SET
+         journey_id = $2,
+         updated_at = NOW()
        RETURNING *`,
       [userId, journeyId]
     );
