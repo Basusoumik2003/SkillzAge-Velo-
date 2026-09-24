@@ -1514,6 +1514,14 @@ export default function useWorkspaceController() {
           journey_name: resolvedJourneyName,
           journey_description: resolvedJourneyDescription,
           description: resolvedJourneyDescription,
+          // Keep the student's saved startup idea with the selected journey so
+          // the opening mentor messages can show the same context that the
+          // backend uses for mentor answers and web search.
+          idea_title: data?.profile?.idea_title || "",
+          problem_statement: data?.profile?.problem_statement || "",
+          solution_summary: data?.profile?.solution_summary || "",
+          target_users: data?.profile?.target_users || "",
+          industry_tags: data?.profile?.industry_tags || "",
           steps: data.journey.map((phase) => ({
             id: phase?.id ?? null,
             title:
@@ -3442,6 +3450,27 @@ export default function useWorkspaceController() {
           ? `${timeGreeting()}, ${studentName}! Welcome to the ${projectTitle} trial project. This is a practice trial, not a paid internship project, so use it to understand the workflow before unlocking internship projects. Take your time reviewing the stage information; it will make everything that follows much smoother!`
           : `${timeGreeting()}, ${studentName}! Welcome to the ${projectTitle} project. We are running this exactly like a real industry engagement - so before jumping into execution, let us make sure you have the full business picture. Take your time reviewing the stage information; it will make everything that follows much smoother!`
       });
+
+      const ideaTitle = String(catalogProject?.idea_title || "").trim();
+      const problemStatement = String(catalogProject?.problem_statement || "").trim();
+      const solutionSummary = String(catalogProject?.solution_summary || "").trim();
+      const targetUsers = String(catalogProject?.target_users || "").trim();
+      const industryTags = String(catalogProject?.industry_tags || "").trim();
+      if (ideaTitle || problemStatement || solutionSummary || targetUsers || industryTags) {
+        const ideaLines = [];
+        if (ideaTitle) ideaLines.push(`Idea: ${ideaTitle}`);
+        if (problemStatement) ideaLines.push(`Problem: ${problemStatement}`);
+        if (solutionSummary) ideaLines.push(`Solution: ${solutionSummary}`);
+        if (targetUsers) ideaLines.push(`Target users: ${targetUsers}`);
+        if (industryTags) ideaLines.push(`Industry: ${industryTags}`);
+        items.push({
+          role: "assistant",
+          agent,
+          kind: "stage-detail",
+          label: "Your startup idea",
+          content: ideaLines.join("\n")
+        });
+      }
     }
     const objective = String(activeStageData.objective || "").trim();
     if (objective) {
