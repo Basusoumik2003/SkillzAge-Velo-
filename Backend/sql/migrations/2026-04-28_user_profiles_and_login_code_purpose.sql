@@ -3,12 +3,12 @@
 
 BEGIN;
 
-ALTER TABLE login_codes
-  ADD COLUMN IF NOT EXISTS purpose VARCHAR(30) NOT NULL DEFAULT 'login';
+-- ALTER TABLE login_codes
+--   ADD COLUMN IF NOT EXISTS purpose VARCHAR(30) NOT NULL DEFAULT 'login';
 
-CREATE INDEX IF NOT EXISTS ix_login_codes_email_purpose ON login_codes(email, purpose);
+-- CREATE INDEX IF NOT EXISTS ix_login_codes_email_purpose ON login_codes(email, purpose);
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS user_profiles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
