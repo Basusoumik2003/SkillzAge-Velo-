@@ -24,15 +24,23 @@ export async function listAdminMentors() {
 // only on student_profiles.journey_id.
 // ======================================================
 
-export async function getStartupWorkspace(journeyId = "") {
-  const normalizedJourneyId = String(journeyId || "").trim();
+export async function getStartupWorkspace(context = {}) {
+  const normalizedContext = typeof context === "object"
+    ? context
+    : { journeyId: context };
+  const normalizedJourneyId = String(
+    normalizedContext.journeyId || ""
+  ).trim();
+  const normalizedEntitlementId = String(
+    normalizedContext.entitlementId || ""
+  ).trim();
+
+  const params = {};
+  if (normalizedJourneyId) params.journey_id = normalizedJourneyId;
+  if (normalizedEntitlementId) params.entitlement_id = normalizedEntitlementId;
 
   const { data } = await startupApi.get("/workspace", {
-    params: normalizedJourneyId
-      ? {
-          journey_id: normalizedJourneyId
-        }
-      : undefined
+    params: Object.keys(params).length > 0 ? params : undefined
   });
 
   return data;

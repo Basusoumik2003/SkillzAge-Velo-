@@ -315,11 +315,15 @@ async function fetchStageRows({ journeyId = null } = {}) {
  * (Backend/app/services/startup_progress.py owns writing this — deliverable
  * approval there calls mark_stage_complete when a gated stage's required
  * deliverables all pass). Node only reads it, to decide stage unlocking. */
-async function fetchCompletedStageIds(userId) {
+async function fetchCompletedStageIds(userId, entitlementId = null) {
   if (!userId) return new Set();
   const { rows } = await pool.query(
-    "SELECT stage_id FROM student_stage_progress WHERE user_id = $1 AND status = 'completed' AND stage_id IS NOT NULL",
-    [userId]
+    `SELECT stage_id FROM student_stage_progress
+     WHERE user_id = $1
+       AND ($2::text IS NULL OR entitlement_id = $2)
+       AND status = 'completed'
+       AND stage_id IS NOT NULL`,
+    [userId, entitlementId]
   );
   return new Set(rows.map((row) => row.stage_id));
 }
@@ -447,7 +451,19 @@ async function loadJourney({ journeyId = null } = {}) {
   return nestJourney(phases, stages);
 }
 
-async function getCurrentProfile(userId) {
+async function getCurrentProfile(userId, journeyId = null, entitlementId = null) {
+  const scopedEntitlementId = String(entitlementId || "").trim();
+  const normalizedJourneyId = normalizeInteger(journeyId, null);
+  const where = scopedEntitlementId
+    ? "sp.user_id = $1 AND sp.journey_id = $2 AND sp.entitlement_id = $3"
+    : normalizedJourneyId
+      ? "sp.user_id = $1 AND sp.journey_id = $2 AND sp.entitlement_id IS NULL"
+      : "sp.user_id = $1 AND sp.entitlement_id IS NULL";
+  const params = scopedEntitlementId
+    ? [userId, normalizedJourneyId, scopedEntitlementId]
+    : normalizedJourneyId
+      ? [userId, normalizedJourneyId]
+      : [userId];
   const { rows } = await pool.query(
     `SELECT sp.*,
             si.id AS idea_id,
@@ -463,22 +479,24 @@ async function getCurrentProfile(userId) {
        ON si.profile_id = sp.id
       AND si.is_primary = TRUE
       AND si.is_active = TRUE
-     WHERE sp.user_id = $1
-     LIMIT 1`,
-    [userId]
+      WHERE ${where}
+      ORDER BY sp.updated_at DESC
+      LIMIT 1`,
+    params
   );
   return rows[0] || null;
 }
 
-async function getOrCreateSession({ userId, profileId, ideaId, phaseId, stageId, sessionTitle, language }) {
+async function getOrCreateSession({ userId, profileId, ideaId, phaseId, stageId, sessionTitle, language, entitlementId = null }) {
   const latest = await pool.query(
     `SELECT id
      FROM conversation_sessions
      WHERE user_id = $1
+       AND ($2::text IS NULL OR entitlement_id = $2)
        AND status = 'active'
      ORDER BY updated_at DESC
      LIMIT 1`,
-    [userId]
+    [userId, entitlementId]
   );
 
   if (latest.rows[0]?.id) {
@@ -492,17 +510,17 @@ async function getOrCreateSession({ userId, profileId, ideaId, phaseId, stageId,
            language = COALESCE(NULLIF($7, ''), language),
            updated_at = NOW()
        WHERE id = $1`,
-      [latest.rows[0].id, profileId, ideaId, phaseId, stageId, sessionTitle, language]
+       [latest.rows[0].id, profileId, ideaId, phaseId, stageId, sessionTitle, language]
     );
     return latest.rows[0].id;
   }
 
   const created = await pool.query(
     `INSERT INTO conversation_sessions
-      (user_id, profile_id, idea_id, phase_id, stage_id, session_title, language)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+      (user_id, profile_id, idea_id, phase_id, stage_id, session_title, language, entitlement_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id`,
-    [userId, profileId, ideaId, phaseId, stageId, sessionTitle || "Startup journey", language || "english"]
+    [userId, profileId, ideaId, phaseId, stageId, sessionTitle || "Startup journey", language || "english", entitlementId]
   );
   return created.rows[0].id;
 }
@@ -869,7 +887,9 @@ async function upsertSessionMemory({ sessionId, userId, profileId, ideaId, phase
 router.get("/startup/workspace", requireAuth, async (req, res, next) => {
   try {
     const userId = req.auth.userId;
-    let profile = await getCurrentProfile(userId);
+    const requestedEntitlementId = String(
+      req.query?.entitlement_id || req.query?.entitlementId || ""
+    ).trim();
     // The Products card tells us exactly which journey the user picked and
     // sends it as ?journey_id=<id>. Honour that first so a brand-new user with
     // no student_profiles row can still open the selected journey. Fall back to
@@ -887,22 +907,48 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
             allowFirstActiveFallback: false
           });
 
+    let profile = await getCurrentProfile(
+      userId,
+      journeyId,
+      requestedEntitlementId || null
+    );
+
     // Ensure the student has a user_profiles row (and record the picked
     // journey on it). The mentor chat endpoint (Python /chat/) returns
     // "Please select a project first" when this row is missing, which the
     // workspace surfaces as "Mentor offline" - so a card-click straight into
     // the workspace must create it, not wait for the profile form.
     try {
-      await pool.query(
-        `INSERT INTO user_profiles (user_id, journey_id)
-         VALUES ($1, $2)
-         ON CONFLICT (user_id)
-         DO UPDATE SET journey_id = COALESCE($2, user_profiles.journey_id),
-                       updated_at = NOW()`,
-        [userId, journeyId || null]
-      );
+      if (requestedEntitlementId) {
+        const scopedProfile = await pool.query(
+          `SELECT id FROM user_profiles
+           WHERE user_id = $1 AND journey_id = $2 AND entitlement_id = $3
+           LIMIT 1`,
+          [userId, journeyId || null, requestedEntitlementId]
+        );
+        if (!scopedProfile.rows[0]) {
+          await pool.query(
+            `INSERT INTO user_profiles (user_id, journey_id, entitlement_id)
+             VALUES ($1, $2, $3)`,
+            [userId, journeyId || null, requestedEntitlementId]
+          );
+        }
+      } else {
+        await pool.query(
+          `INSERT INTO user_profiles (user_id, journey_id)
+           VALUES ($1, $2)
+           ON CONFLICT (user_id)
+           DO UPDATE SET journey_id = COALESCE($2, user_profiles.journey_id),
+                         updated_at = NOW()`,
+          [userId, journeyId || null]
+        );
+      }
       if (!profile) {
-        profile = await getCurrentProfile(userId);
+        profile = await getCurrentProfile(
+          userId,
+          journeyId,
+          requestedEntitlementId || null
+        );
       }
     } catch (profileError) {
       // Non-fatal: the workspace can still render read-only.
@@ -943,7 +989,10 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
         )).rows[0] || null
       : null;
     const rawJourney = await loadJourney({ journeyId });
-    const completedStageIds = await fetchCompletedStageIds(userId);
+    const completedStageIds = await fetchCompletedStageIds(
+      userId,
+      requestedEntitlementId || null
+    );
     const { phases: journey, activePhase, activeStage } = annotateJourneyProgress(rawJourney, completedStageIds);
     const sessionId = await getOrCreateSession({
       userId,
@@ -952,7 +1001,8 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
       phaseId: activePhase?.id || null,
       stageId: activeStage?.id || null,
       sessionTitle: `${activePhase?.phase_name || "Startup journey"} / ${activeStage?.stage_name || "Intro"}`,
-      language: profile?.preferred_language || "english"
+      language: profile?.preferred_language || "english",
+      entitlementId: requestedEntitlementId || null
     });
     const context = await fetchRetrievedContext({
       userId,
@@ -1005,6 +1055,9 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
 router.post("/startup/stages/:stageId/complete", requireAuth, async (req, res, next) => {
   try {
     const userId = req.auth.userId;
+    const entitlementId = String(
+      req.body?.entitlement_id || req.body?.entitlementId || ""
+    ).trim() || null;
     const stageId = normalizeInteger(req.params.stageId, null);
     if (!stageId) {
       return res.status(400).json({ detail: "A valid stage id is required." });
@@ -1025,24 +1078,31 @@ router.post("/startup/stages/:stageId/complete", requireAuth, async (req, res, n
     let profileId =
       (
         await pool.query(
-          "SELECT id FROM user_profiles WHERE user_id = $1 LIMIT 1",
-          [userId]
+          `SELECT id FROM user_profiles
+           WHERE user_id = $1
+             AND ($2::text IS NULL OR entitlement_id = $2)
+           ORDER BY updated_at DESC LIMIT 1`,
+          [userId, entitlementId]
         )
       ).rows[0]?.id || null;
     if (!profileId) {
       profileId =
         (
           await pool.query(
-            "INSERT INTO user_profiles (user_id) VALUES ($1) RETURNING id",
-            [userId]
+            `INSERT INTO user_profiles (user_id, entitlement_id)
+             VALUES ($1, $2) RETURNING id`,
+            [userId, entitlementId]
           )
         ).rows[0]?.id || null;
     }
 
     const existing = (
       await pool.query(
-        "SELECT id FROM student_stage_progress WHERE user_id = $1 AND stage_id = $2 LIMIT 1",
-        [userId, stageId]
+        `SELECT id FROM student_stage_progress
+         WHERE user_id = $1 AND stage_id = $2
+           AND ($3::text IS NULL OR entitlement_id = $3)
+         LIMIT 1`,
+        [userId, stageId, entitlementId]
       )
     ).rows[0];
 
@@ -1054,20 +1114,24 @@ router.post("/startup/stages/:stageId/complete", requireAuth, async (req, res, n
              completed_at = NOW(),
              phase_id = COALESCE($2, phase_id),
              profile_id = COALESCE(profile_id, $3),
+             entitlement_id = COALESCE($4, entitlement_id),
              updated_at = NOW()
-         WHERE id = $1`,
-        [existing.id, phaseId, profileId]
+          WHERE id = $1`,
+        [existing.id, phaseId, profileId, entitlementId]
       );
     } else {
       await pool.query(
         `INSERT INTO student_stage_progress
-           (user_id, profile_id, phase_id, stage_id, status, progress_percent, started_at, completed_at)
-         VALUES ($1, $2, $3, $4, 'completed', 100, NOW(), NOW())`,
-        [userId, profileId, phaseId, stageId]
+           (user_id, profile_id, phase_id, stage_id, entitlement_id, status, progress_percent, started_at, completed_at)
+         VALUES ($1, $2, $3, $4, $5, 'completed', 100, NOW(), NOW())`,
+        [userId, profileId, phaseId, stageId, entitlementId]
       );
     }
 
-    const completedStageIds = await fetchCompletedStageIds(userId);
+    const completedStageIds = await fetchCompletedStageIds(
+      userId,
+      entitlementId
+    );
     res.json({
       success: true,
       stage_id: stageId,
@@ -1126,6 +1190,9 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
       req.body?.journey_id || req.body?.journeyId,
       null
     );
+    const entitlementId = String(
+      req.body?.entitlement_id || req.body?.entitlementId || ""
+    ).trim() || null;
     const toStringArray = (value) => {
       if (Array.isArray(value)) {
         return value.map((item) => String(item || "").trim()).filter(Boolean);
@@ -1163,15 +1230,16 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
         user_id, age, education_level, country, state, city,
         skills, interests, available_hours_per_week,
         has_laptop, has_internet, has_team, has_funding,
-        participation, current_idea, startup_stage, goals, updated_at
+        participation, current_idea, startup_stage, goals,
+        journey_id, entitlement_id, updated_at
       )
       VALUES (
         $1, $2, $3, $4, $5, $6,
         $7, $8, $9,
         $10, $11, $12, $13,
-        $14, $15, $16, $17, NOW()
+        $14, $15, $16, $17, $18, $19, NOW()
       )
-      ON CONFLICT (user_id) DO UPDATE SET
+      ON CONFLICT DO UPDATE SET
         age = EXCLUDED.age,
         education_level = EXCLUDED.education_level,
         country = EXCLUDED.country,
@@ -1188,6 +1256,8 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
         current_idea = EXCLUDED.current_idea,
         startup_stage = EXCLUDED.startup_stage,
         goals = EXCLUDED.goals,
+        journey_id = COALESCE(EXCLUDED.journey_id, user_profiles.journey_id),
+        entitlement_id = COALESCE(EXCLUDED.entitlement_id, user_profiles.entitlement_id),
         updated_at = NOW()
       RETURNING *`,
       [
@@ -1207,7 +1277,9 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
         participation,
         currentIdea,
         startupStage,
-        goals
+         goals,
+         journeyId,
+         entitlementId
       ]
     );
 
@@ -1237,18 +1309,20 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
           INSERT INTO user_project_details (
             user_id,
             journey_id,
+            entitlement_id,
             details,
             updated_at
           )
-          VALUES ($1, $2, $3::jsonb, NOW())
-          ON CONFLICT (user_id, journey_id)
-          DO UPDATE SET
+          VALUES ($1, $2, $3, $4::jsonb, NOW())
+          ON CONFLICT DO UPDATE SET
             details = EXCLUDED.details,
+            entitlement_id = COALESCE(EXCLUDED.entitlement_id, user_project_details.entitlement_id),
             updated_at = NOW()
           `,
           [
             userId,
             journeyId,
+            entitlementId,
             JSON.stringify({
               age,
               country,
@@ -1264,6 +1338,7 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
           INSERT INTO user_project_access (
             user_id,
             journey_id,
+            entitlement_id,
             access_status,
             project_status,
             purchased_at,
@@ -1272,18 +1347,19 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
           VALUES (
             $1,
             $2,
+            $3,
             'active',
             'in_progress',
             NOW(),
             NOW()
           )
-          ON CONFLICT (user_id, journey_id)
-          DO UPDATE SET
+          ON CONFLICT DO UPDATE SET
             access_status = 'active',
             project_status = 'in_progress',
+            entitlement_id = COALESCE(EXCLUDED.entitlement_id, user_project_access.entitlement_id),
             updated_at = NOW()
           `,
-          [userId, journeyId]
+          [userId, journeyId, entitlementId]
         );
 
         console.log(
@@ -1459,6 +1535,9 @@ router.post("/startup/journey/select", requireAuth, async (req, res, next) => {
 router.post("/startup/query", requireAuth, async (req, res, next) => {
   try {
     const userId = req.auth.userId;
+    const entitlementId = String(
+      req.body?.entitlement_id || req.body?.entitlementId || ""
+    ).trim() || null;
     const question = normalizeText(req.body?.question, 8000);
     if (!question) {
       return res.status(400).json({ detail: "Question is required." });
@@ -1468,7 +1547,11 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
     const stageId = normalizeInteger(req.body?.stage_id || req.body?.stageId, null);
     const requestedSessionId = normalizeText(req.body?.session_id || req.body?.sessionId, 80);
 
-    const profile = await getCurrentProfile(userId);
+    const profile = await getCurrentProfile(
+      userId,
+      req.body?.journey_id || req.body?.journeyId || null,
+      entitlementId
+    );
     const phase = phaseId
       ? (await pool.query("SELECT * FROM journey_phases WHERE id = $1 LIMIT 1", [phaseId])).rows[0] || null
       : null;
@@ -1482,7 +1565,8 @@ router.post("/startup/query", requireAuth, async (req, res, next) => {
       phaseId: phase?.id || null,
       stageId: stage?.id || null,
       sessionTitle: `${phase?.phase_name || "Startup journey"} / ${stage?.stage_name || "Question"}`,
-      language: profile?.preferred_language || "english"
+      language: profile?.preferred_language || "english",
+      entitlementId
     });
 
     const [context, existingSessionRow, { mentor, resolution }, priorStageRun] = await Promise.all([

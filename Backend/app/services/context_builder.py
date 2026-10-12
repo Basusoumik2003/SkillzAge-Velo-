@@ -255,7 +255,7 @@ def _build_legacy_context(user: User, progress: ProjectProgress | None, latest_m
 # student_profiles / startup_ideas).
 # ---------------------------------------------------------------------------
 
-def _student_profile(db: Session | None, user_id) -> dict:
+def _student_profile(db: Session | None, user_id, entitlement_id=None) -> dict:
     if not db or not user_id:
         return {}
     row = db.execute(
@@ -271,15 +271,17 @@ def _student_profile(db: Session | None, user_id) -> dict:
                    has_laptop, has_internet, has_team, has_funding
             FROM user_profiles
             WHERE user_id = :user_id
+              AND (:entitlement_id IS NULL OR entitlement_id = :entitlement_id)
+            ORDER BY updated_at DESC
             LIMIT 1
             """
         ),
-        {"user_id": user_id},
+        {"user_id": user_id, "entitlement_id": entitlement_id},
     ).mappings().first()
     return dict(row) if row else {}
 
 
-def _primary_startup_idea(db: Session | None, user_id) -> dict | None:
+def _primary_startup_idea(db: Session | None, user_id, entitlement_id=None) -> dict | None:
     if not db or not user_id:
         return None
     row = db.execute(
@@ -287,12 +289,14 @@ def _primary_startup_idea(db: Session | None, user_id) -> dict | None:
             """
             SELECT id, idea_title, problem_statement, solution_summary, target_users, industry_tags, idea_status
             FROM startup_ideas
-            WHERE user_id = :user_id AND is_active = TRUE
+            WHERE user_id = :user_id
+              AND (:entitlement_id IS NULL OR entitlement_id = :entitlement_id)
+              AND is_active = TRUE
             ORDER BY is_primary DESC, updated_at DESC
             LIMIT 1
             """
         ),
-        {"user_id": user_id},
+        {"user_id": user_id, "entitlement_id": entitlement_id},
     ).mappings().first()
     if row:
         return dict(row)
@@ -300,8 +304,8 @@ def _primary_startup_idea(db: Session | None, user_id) -> dict | None:
     # No rich startup_ideas row - fall back to the free-text idea captured on
     # the profile form (user_profiles.current_idea).
     fallback = db.execute(
-        text("SELECT current_idea FROM user_profiles WHERE user_id = :user_id LIMIT 1"),
-        {"user_id": user_id},
+        text("SELECT current_idea FROM user_profiles WHERE user_id = :user_id AND (:entitlement_id IS NULL OR entitlement_id = :entitlement_id) ORDER BY updated_at DESC LIMIT 1"),
+        {"user_id": user_id, "entitlement_id": entitlement_id},
     ).first()
     if fallback and str(fallback[0] or "").strip():
         return {

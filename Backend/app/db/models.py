@@ -73,6 +73,7 @@ class StudentStageProgress(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    entitlement_id = Column(String(120), nullable=True, index=True)
 
     profile_id = Column(UUID(as_uuid=True), nullable=True)
     idea_id = Column(UUID(as_uuid=True), nullable=True)
@@ -285,6 +286,7 @@ class MentorChatMessage(Base):
         nullable=False,
         index=True
     )
+    entitlement_id = Column(String(120), nullable=True, index=True)
     project_name = Column(String(160), nullable=False, index=True)
     mentor_id = Column(
         Integer,

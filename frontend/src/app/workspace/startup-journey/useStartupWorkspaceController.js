@@ -32,33 +32,44 @@ const EMPTY_PROFILE = {
 
 // Resolve the selected journey id the same way the embedded workspace does:
 // iframe URL -> parent (Wix) page URL -> localStorage. Never hardcoded.
-function resolveJourneyId() {
-  if (typeof window === "undefined") return "";
+function resolveWorkspaceContext() {
+  if (typeof window === "undefined") {
+    return { journeyId: "", entitlementId: "" };
+  }
   const clean = (value) => {
-    const raw = String(value ?? "").trim();
-    return /^\d+$/.test(raw) ? raw : "";
+    return String(value ?? "").trim();
   };
   const fromQuery = (search) => {
     try {
       const params = new URLSearchParams(String(search || "").replace(/^\?/, ""));
-      return clean(params.get("journey_id") || params.get("journeyId") || "");
+      return {
+        journeyId: clean(params.get("journey_id") || params.get("journeyId") || ""),
+        entitlementId: clean(params.get("entitlement_id") || params.get("entitlementId") || "")
+      };
     } catch {
-      return "";
+      return { journeyId: "", entitlementId: "" };
     }
   };
-  let fromReferrer = "";
+  let fromReferrer = { journeyId: "", entitlementId: "" };
   try {
     fromReferrer = document.referrer ? fromQuery(new URL(document.referrer).search) : "";
   } catch {
-    fromReferrer = "";
+    fromReferrer = { journeyId: "", entitlementId: "" };
   }
-  let fromStorage = "";
+  let fromStorage = { journeyId: "", entitlementId: "" };
   try {
-    fromStorage = clean(window.localStorage.getItem("internlabs_journey_id") || "");
+    fromStorage = {
+      journeyId: clean(window.localStorage.getItem("internlabs_journey_id") || ""),
+      entitlementId: clean(window.localStorage.getItem("skillzage_selected_entitlement_id") || "")
+    };
   } catch {
-    fromStorage = "";
+    fromStorage = { journeyId: "", entitlementId: "" };
   }
-  return fromQuery(window.location.search) || fromReferrer || fromStorage || "";
+  const query = fromQuery(window.location.search);
+  return {
+    journeyId: query.journeyId || fromReferrer.journeyId || fromStorage.journeyId || "",
+    entitlementId: query.entitlementId || fromReferrer.entitlementId || fromStorage.entitlementId || ""
+  };
 }
 
 function mapMessages(rows = []) {
@@ -119,15 +130,26 @@ export default function useStartupWorkspaceController() {
     if (!ready) return;
     let cancelled = false;
     setLoading(true);
-    const selectedJourneyId = resolveJourneyId();
+    const workspaceContext = resolveWorkspaceContext();
+    const selectedJourneyId = workspaceContext.journeyId;
+    const selectedEntitlementId = workspaceContext.entitlementId;
     if (selectedJourneyId) {
       try {
         window.localStorage.setItem("internlabs_journey_id", selectedJourneyId);
+        if (selectedEntitlementId) {
+          window.localStorage.setItem(
+            "skillzage_selected_entitlement_id",
+            selectedEntitlementId
+          );
+        }
       } catch {
         // Storage may be unavailable inside a sandboxed iframe.
       }
     }
-    getStartupWorkspace(selectedJourneyId)
+    getStartupWorkspace({
+      journeyId: selectedJourneyId,
+      entitlementId: selectedEntitlementId
+    })
       .then((data) => {
         if (cancelled) return;
         setWorkspace({
@@ -189,6 +211,8 @@ export default function useStartupWorkspaceController() {
     try {
       const payload = {
         ...profileDraft,
+        journey_id: resolveWorkspaceContext().journeyId || null,
+        entitlement_id: resolveWorkspaceContext().entitlementId || null,
         age: profileDraft.age === "" ? null : Number(profileDraft.age),
         available_time_hours_per_week: profileDraft.available_time_hours_per_week === "" ? 0 : Number(profileDraft.available_time_hours_per_week),
         readiness_score: Number(profileDraft.readiness_score || 0)
@@ -221,7 +245,9 @@ export default function useStartupWorkspaceController() {
         question: text,
         phase_id: selectedPhase?.id || null,
         stage_id: selectedStage?.id || null,
-        session_id: workspace.session_id || null
+        session_id: workspace.session_id || null,
+        entitlement_id: resolveWorkspaceContext().entitlementId || null,
+        journey_id: resolveWorkspaceContext().journeyId || null
       });
       setWorkspace((current) => ({ ...current, session_id: result.session_id || current.session_id }));
       setAnswer(result.answer || "");
