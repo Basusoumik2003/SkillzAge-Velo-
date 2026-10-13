@@ -97,8 +97,8 @@ function normalizeProfileInput(profile = {}) {
     interests: normalizeTextArray(profile.interests),
     availableHoursPerWeek: normalizeNumeric(
       profile.availableHoursPerWeek ??
-        profile.available_hours_per_week ??
-        profile.available_time_hours_per_week,
+      profile.available_hours_per_week ??
+      profile.available_time_hours_per_week,
       null,
     ),
     hasLaptop: normalizeBoolean(profile.hasLaptop ?? profile.has_laptop),
@@ -154,8 +154,8 @@ async function upsertProfile(userId, profile) {
       $10, $11, $12, $13, $14, $15, $16, $17,
       $18, $19, NOW()
     )
-    ON CONFLICT (user_id)
-    DO UPDATE SET
+    ON CONFLICT ON CONSTRAINT user_profiles_user_id_key
+DO UPDATE SET
       journey_id = COALESCE(EXCLUDED.journey_id, user_profiles.journey_id),
       age = EXCLUDED.age,
       education_level = EXCLUDED.education_level,
