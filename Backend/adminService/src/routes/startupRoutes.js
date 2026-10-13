@@ -1239,7 +1239,8 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
         $10, $11, $12, $13,
         $14, $15, $16, $17, $18, $19, NOW()
       )
-      ON CONFLICT DO UPDATE SET
+      ON CONFLICT ON CONSTRAINT user_profiles_user_id_key
+      DO UPDATE SET
         age = EXCLUDED.age,
         education_level = EXCLUDED.education_level,
         country = EXCLUDED.country,
