@@ -705,13 +705,58 @@ router.get(
         ? data.services
         : [];
 
+      // Wix journeyId is only the CMS/workspace reference. The admin
+      // journey editor must use the PostgreSQL journey id instead.
+      const wixProductIds = services
+        .map((service) => String(
+          service?.wixProductId ||
+          service?.wix_product_id ||
+          service?.productId ||
+          service?.product_id ||
+          ""
+        ).trim())
+        .filter(Boolean);
+
+      const mappingRows = wixProductIds.length
+        ? await pool.query(
+            `SELECT wix_product_id, journey_id
+             FROM project_product_mapping
+             WHERE is_active = TRUE
+               AND wix_product_id = ANY($1::text[])`,
+            [wixProductIds]
+          )
+        : { rows: [] };
+
+      const journeyByWixProduct = new Map(
+        mappingRows.rows.map((row) => [
+          String(row.wix_product_id),
+          row.journey_id
+        ])
+      );
+
+      const adminServices = services.map((service) => {
+        const wixProductId = String(
+          service?.wixProductId ||
+          service?.wix_product_id ||
+          service?.productId ||
+          service?.product_id ||
+          ""
+        ).trim();
+
+        return {
+          ...service,
+          adminJourneyId:
+            journeyByWixProduct.get(wixProductId) || ""
+        };
+      });
+
       console.log(
         "[ADMIN SERVICES] Wix services received:",
         services
       );
 
       res.json({
-        services
+        services: adminServices
       });
     } catch (error) {
       console.error(

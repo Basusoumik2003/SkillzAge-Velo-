@@ -236,7 +236,8 @@ export default function AdminJourneyPage() {
       // still appear even if it has not been mapped to a journey yet.
       const list = rawServices
         .map((service) => {
-          const journeyId =
+           const journeyId =
+             service.adminJourneyId ??
             service.journeyId ??
             service.journey_id ??
             service.journeyID ??
@@ -284,6 +285,12 @@ export default function AdminJourneyPage() {
               journeyId !== null && journeyId !== undefined
                 ? String(journeyId).trim()
                 : "",
+
+             adminJourneyId:
+               service.adminJourneyId !== null &&
+               service.adminJourneyId !== undefined
+                 ? String(service.adminJourneyId).trim()
+                 : "",
 
             wixProductId:
               service.wixProductId ??
