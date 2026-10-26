@@ -708,13 +708,17 @@ router.get(
       // Wix journeyId is only the CMS/workspace reference. The admin
       // journey editor must use the PostgreSQL journey id instead.
       const wixProductIds = services
-        .map((service) => String(
-          service?.wixProductId ||
-          service?.wix_product_id ||
-          service?.productId ||
-          service?.product_id ||
-          ""
-        ).trim())
+        .flatMap((service) => [
+          service?.wixProductId,
+          service?.wix_product_id,
+          service?.productId,
+          service?.product_id,
+          service?.serviceId,
+          service?.service_id,
+          service?._id,
+          service?.id
+        ])
+        .map((value) => String(value || "").trim())
         .filter(Boolean);
 
       const mappingRows = wixProductIds.length
@@ -734,21 +738,68 @@ router.get(
         ])
       );
 
-      const adminServices = services.map((service) => {
-        const wixProductId = String(
-          service?.wixProductId ||
-          service?.wix_product_id ||
-          service?.productId ||
-          service?.product_id ||
-          ""
-        ).trim();
+      const adminServices = await Promise.all(services.map(async (service) => {
+        const serviceIds = [
+          service?.wixProductId,
+          service?.wix_product_id,
+          service?.productId,
+          service?.product_id,
+          service?.serviceId,
+          service?.service_id,
+          service?._id,
+          service?.id
+        ]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean);
+
+        let adminJourneyId = serviceIds
+          .map((id) => journeyByWixProduct.get(id))
+          .find(Boolean) || "";
+
+        // Preserve the old admin behavior only when the CMS journey id is
+        // also a real PostgreSQL journey id. Never send an invalid Wix id.
+        if (!adminJourneyId) {
+          const cmsJourneyId = Number(
+            service?.journeyId ||
+            service?.journey_id ||
+            service?.journeyID
+          );
+
+          if (Number.isInteger(cmsJourneyId) && cmsJourneyId > 0) {
+            const journeyExists = await pool.query(
+              `SELECT 1 FROM journeys WHERE id = $1 LIMIT 1`,
+              [cmsJourneyId]
+            );
+
+            if (journeyExists.rows.length) {
+              adminJourneyId = cmsJourneyId;
+            }
+          }
+        }
+
+        // Existing installations may not have a mapping row yet. Match the
+        // already-created PostgreSQL journey by name before leaving the
+        // service unavailable in the admin editor.
+        if (!adminJourneyId && service?.serviceName) {
+          const matchingJourney = await pool.query(
+            `SELECT id
+             FROM journeys
+             WHERE LOWER(TRIM(journey_name)) = LOWER(TRIM($1))
+             ORDER BY id ASC
+             LIMIT 1`,
+            [String(service.serviceName).trim()]
+          );
+
+          if (matchingJourney.rows.length) {
+            adminJourneyId = matchingJourney.rows[0].id;
+          }
+        }
 
         return {
           ...service,
-          adminJourneyId:
-            journeyByWixProduct.get(wixProductId) || ""
+          adminJourneyId
         };
-      });
+      }));
 
       console.log(
         "[ADMIN SERVICES] Wix services received:",
