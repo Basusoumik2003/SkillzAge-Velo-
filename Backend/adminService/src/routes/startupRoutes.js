@@ -1315,7 +1315,8 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
             updated_at
           )
           VALUES ($1, $2, $3, $4::jsonb, NOW())
-          ON CONFLICT DO UPDATE SET
+          ON CONFLICT (user_id, journey_id)
+          DO UPDATE SET
             details = EXCLUDED.details,
             entitlement_id = COALESCE(EXCLUDED.entitlement_id, user_project_details.entitlement_id),
             updated_at = NOW()
@@ -1354,7 +1355,8 @@ router.post("/startup/profile", requireAuth, async (req, res, next) => {
             NOW(),
             NOW()
           )
-          ON CONFLICT DO UPDATE SET
+          ON CONFLICT (user_id, journey_id)
+          DO UPDATE SET
             access_status = 'active',
             project_status = 'in_progress',
             entitlement_id = COALESCE(EXCLUDED.entitlement_id, user_project_access.entitlement_id),
