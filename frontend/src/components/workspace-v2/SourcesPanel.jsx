@@ -27,6 +27,10 @@ export default function SourcesPanel({
     activeStageData?.objective || activeStageData?.title || "";
 
   const currentIdea =
+    catalogProject?.current_idea ||
+    catalogProject?.problem_statement ||
+    catalogProject?.solution_summary ||
+    catalogProject?.idea_title ||
     catalogProject?.company_profile_text ||
     catalogProject?.title ||
     projectName ||

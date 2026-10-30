@@ -1522,6 +1522,7 @@ export default function useWorkspaceController() {
           // Keep the student's saved startup idea with the selected journey so
           // the opening mentor messages can show the same context that the
           // backend uses for mentor answers and web search.
+          current_idea: data?.profile?.current_idea || "",
           idea_title: data?.profile?.idea_title || "",
           problem_statement: data?.profile?.problem_statement || "",
           solution_summary: data?.profile?.solution_summary || "",
