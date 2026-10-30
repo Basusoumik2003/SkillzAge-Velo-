@@ -1311,7 +1311,12 @@ export default function useWorkspaceController() {
 
         const data =
           await getStartupWorkspace(
-            selectedJourneyId
+            {
+              journeyId: selectedJourneyId,
+              serviceName:
+                resolveClientServiceName({ searchParams }) ||
+                serviceName
+            }
           );
 
         if (cancelled) {
@@ -1742,7 +1747,7 @@ export default function useWorkspaceController() {
     return () => {
       cancelled = true;
     };
-  }, [authReady, ready, searchParams, startupJourneyId]);
+  }, [authReady, ready, searchParams, serviceName, startupJourneyId]);
 
   const methodDisplayStep = useMemo(() => {
     return clampStep(methodState.current_step, methodTotalSteps || 1);

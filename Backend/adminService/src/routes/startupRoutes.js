@@ -984,8 +984,29 @@ async function resolveWorkspaceJourneyId({
   requestedJourneyId,
   serviceName
 }) {
-  const requestedId = normalizeInteger(requestedJourneyId, null);
+  const parsedRequestedId = normalizeInteger(requestedJourneyId, null);
+  const requestedId =
+    Number.isInteger(parsedRequestedId) && parsedRequestedId > 0
+      ? parsedRequestedId
+      : null;
   const normalizedServiceName = String(serviceName || "").trim();
+
+  if (normalizedServiceName) {
+    const mappedJourney = await pool.query(
+      `SELECT j.id
+       FROM journeys j
+       INNER JOIN journey_phases jp ON jp.journey_id = j.id
+       WHERE LOWER(TRIM(j.journey_name)) = LOWER(TRIM($1))
+       GROUP BY j.id
+       ORDER BY CASE WHEN j.id = $2 THEN 0 ELSE 1 END, j.id ASC
+       LIMIT 1`,
+      [normalizedServiceName, requestedId]
+    );
+
+    if (mappedJourney.rows[0]?.id) {
+      return mappedJourney.rows[0].id;
+    }
+  }
 
   if (requestedId) {
     const configuredJourney = await pool.query(
@@ -999,23 +1020,6 @@ async function resolveWorkspaceJourneyId({
 
     if (configuredJourney.rows[0]?.id) {
       return configuredJourney.rows[0].id;
-    }
-  }
-
-  if (normalizedServiceName) {
-    const mappedJourney = await pool.query(
-      `SELECT j.id
-       FROM journeys j
-       INNER JOIN journey_phases jp ON jp.journey_id = j.id
-       WHERE LOWER(TRIM(j.journey_name)) = LOWER(TRIM($1))
-       GROUP BY j.id
-       ORDER BY j.id ASC
-       LIMIT 1`,
-      [normalizedServiceName]
-    );
-
-    if (mappedJourney.rows[0]?.id) {
-      return mappedJourney.rows[0].id;
     }
   }
 

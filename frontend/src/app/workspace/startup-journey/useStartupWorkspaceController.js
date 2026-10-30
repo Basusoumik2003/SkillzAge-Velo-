@@ -44,31 +44,36 @@ function resolveWorkspaceContext() {
       const params = new URLSearchParams(String(search || "").replace(/^\?/, ""));
       return {
         journeyId: clean(params.get("journey_id") || params.get("journeyId") || ""),
-        entitlementId: clean(params.get("entitlement_id") || params.get("entitlementId") || "")
+        entitlementId: clean(params.get("entitlement_id") || params.get("entitlementId") || ""),
+        serviceName: clean(params.get("service_name") || params.get("serviceName") || "")
       };
     } catch {
-      return { journeyId: "", entitlementId: "" };
+      return { journeyId: "", entitlementId: "", serviceName: "" };
     }
   };
-  let fromReferrer = { journeyId: "", entitlementId: "" };
+  let fromReferrer = { journeyId: "", entitlementId: "", serviceName: "" };
   try {
-    fromReferrer = document.referrer ? fromQuery(new URL(document.referrer).search) : "";
+    fromReferrer = document.referrer
+      ? fromQuery(new URL(document.referrer).search)
+      : fromReferrer;
   } catch {
-    fromReferrer = { journeyId: "", entitlementId: "" };
+    fromReferrer = { journeyId: "", entitlementId: "", serviceName: "" };
   }
-  let fromStorage = { journeyId: "", entitlementId: "" };
+  let fromStorage = { journeyId: "", entitlementId: "", serviceName: "" };
   try {
     fromStorage = {
       journeyId: clean(window.localStorage.getItem("internlabs_journey_id") || ""),
-      entitlementId: clean(window.localStorage.getItem("skillzage_selected_entitlement_id") || "")
+      entitlementId: clean(window.localStorage.getItem("skillzage_selected_entitlement_id") || ""),
+      serviceName: clean(window.localStorage.getItem("internlabs_service_name") || "")
     };
   } catch {
-    fromStorage = { journeyId: "", entitlementId: "" };
+    fromStorage = { journeyId: "", entitlementId: "", serviceName: "" };
   }
   const query = fromQuery(window.location.search);
   return {
     journeyId: query.journeyId || fromReferrer.journeyId || fromStorage.journeyId || "",
-    entitlementId: query.entitlementId || fromReferrer.entitlementId || fromStorage.entitlementId || ""
+    entitlementId: query.entitlementId || fromReferrer.entitlementId || fromStorage.entitlementId || "",
+    serviceName: query.serviceName || fromReferrer.serviceName || fromStorage.serviceName || ""
   };
 }
 
@@ -133,6 +138,7 @@ export default function useStartupWorkspaceController() {
     const workspaceContext = resolveWorkspaceContext();
     const selectedJourneyId = workspaceContext.journeyId;
     const selectedEntitlementId = workspaceContext.entitlementId;
+    const selectedServiceName = workspaceContext.serviceName;
     if (selectedJourneyId) {
       try {
         window.localStorage.setItem("internlabs_journey_id", selectedJourneyId);
@@ -148,7 +154,8 @@ export default function useStartupWorkspaceController() {
     }
     getStartupWorkspace({
       journeyId: selectedJourneyId,
-      entitlementId: selectedEntitlementId
+      entitlementId: selectedEntitlementId,
+      serviceName: selectedServiceName
     })
       .then((data) => {
         if (cancelled) return;

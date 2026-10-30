@@ -19,9 +19,8 @@ export async function listAdminMentors() {
 // If provided, it is sent as:
 // GET /api/startup/workspace?journey_id=<id>
 //
-// This allows the workspace to load the exact journey
-// selected from the Products page instead of depending
-// only on student_profiles.journey_id.
+// The Wix service name is also sent so the backend can map a
+// Wix CMS journey ID to its configured PostgreSQL journey.
 // ======================================================
 
 export async function getStartupWorkspace(context = {}) {
@@ -34,10 +33,14 @@ export async function getStartupWorkspace(context = {}) {
   const normalizedEntitlementId = String(
     normalizedContext.entitlementId || ""
   ).trim();
+  const normalizedServiceName = String(
+    normalizedContext.serviceName || ""
+  ).trim();
 
   const params = {};
   if (normalizedJourneyId) params.journey_id = normalizedJourneyId;
   if (normalizedEntitlementId) params.entitlement_id = normalizedEntitlementId;
+  if (normalizedServiceName) params.service_name = normalizedServiceName;
 
   const { data } = await startupApi.get("/workspace", {
     params: Object.keys(params).length > 0 ? params : undefined
