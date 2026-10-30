@@ -980,6 +980,48 @@ async function upsertSessionMemory({ sessionId, userId, profileId, ideaId, phase
   return summary;
 }
 
+async function resolveWorkspaceJourneyId({
+  requestedJourneyId,
+  serviceName
+}) {
+  const requestedId = normalizeInteger(requestedJourneyId, null);
+  const normalizedServiceName = String(serviceName || "").trim();
+
+  if (requestedId) {
+    const configuredJourney = await pool.query(
+      `SELECT j.id
+       FROM journeys j
+       INNER JOIN journey_phases jp ON jp.journey_id = j.id
+       WHERE j.id = $1
+       LIMIT 1`,
+      [requestedId]
+    );
+
+    if (configuredJourney.rows[0]?.id) {
+      return configuredJourney.rows[0].id;
+    }
+  }
+
+  if (normalizedServiceName) {
+    const mappedJourney = await pool.query(
+      `SELECT j.id
+       FROM journeys j
+       INNER JOIN journey_phases jp ON jp.journey_id = j.id
+       WHERE LOWER(TRIM(j.journey_name)) = LOWER(TRIM($1))
+       GROUP BY j.id
+       ORDER BY j.id ASC
+       LIMIT 1`,
+      [normalizedServiceName]
+    );
+
+    if (mappedJourney.rows[0]?.id) {
+      return mappedJourney.rows[0].id;
+    }
+  }
+
+  return requestedId;
+}
+
 router.get("/startup/workspace", requireAuth, async (req, res, next) => {
   try {
     const userId = req.auth.userId;
@@ -994,14 +1036,10 @@ router.get("/startup/workspace", requireAuth, async (req, res, next) => {
       req.query?.journey_id || req.query?.journeyId,
       null
     );
-    const journeyId =
-      Number.isFinite(requestedJourneyId) && requestedJourneyId > 0
-        ? requestedJourneyId
-        : await resolveEffectiveJourneyId(profile, {
-            // No arbitrary "first active journey" pick here - a missing
-            // selection must surface as an explicit not-selected state.
-            allowFirstActiveFallback: false
-          });
+    const journeyId = await resolveWorkspaceJourneyId({
+      requestedJourneyId,
+      serviceName: req.query?.service_name
+    });
 
     let profile = await getCurrentProfile(
       userId,
